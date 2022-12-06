@@ -1,0 +1,12 @@
+/real_data/
+/output/semantic_result/
+/output/imagenet.pth
+/output/label_2_best_perf.pth
+/output/ss_eff_b0.yaml
+/output/ss_eff_b0_256.yaml
+/output/ss_eff_b0_best.pth
+/output/ss_eff_b1.pth
+/output/ss_eff_b1.yaml
+/output/ss_eff_b7.pth
+/output/ss_hrnet18.yaml
+/output/test_model.pth
