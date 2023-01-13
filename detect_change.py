@@ -1,7 +1,8 @@
 import argparse
+import gc
 import sys
 
-from segment_semantic import *
+from utils.segment_semantic import *
 from utils.detect_change_to_block import *
 
 
@@ -12,25 +13,27 @@ def get_parser():
     :return:
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default="cuda", help="确认训练模型使用的机器")
-    parser.add_argument("--console-output", type=bool, default=True, help="在控制台打印程序运行结果")
-    parser.add_argument("--model-info-path", type=str, default="./output/ss_eff_b0.yaml",
+    parser.add_argument("--model-info-path", type=str, default="./output/ss_eff_b0_new.yaml",
                         help="需要使用的模型信息文件存储路径")
-    parser.add_argument("--target-path", type=str, default="./real_data/processed_data",
+    parser.add_argument("--target-dir", type=str, default="real_data/processed_data",
                         help="需要进行预测的图像存储路径")
-    parser.add_argument("--output-path", type=str, default="./output/semantic_result",
+    parser.add_argument("--file_path", type=str, default="2020_1_*_res_0.5.tif",
+                        help="确认训练模型使用的机器")
+    parser.add_argument("--output-dir", type=str, default="./output/semantic_result",
                         help="输出结果存储路径")
-    parser.add_argument("--change-threshold", type=float, default=0.35,
-                        help="最后网格化判断网格是否变化的阈值，即如果网格中像素比例超过该阈值则判定该网格为变化区域。")
-    parser.add_argument("--block-size", type=float, default=50,
-                        help="变化区域网格化的大小。")
     parser.add_argument("--mode", type=str, default="detect-change",
                         help="程序运行模式，包括detect-change和segment-semantic")
+    parser.add_argument("--device", type=str, default="cuda", help="确认训练模型使用的机器")
+    parser.add_argument("--log-output", action='store_true', help="在控制台打印程序运行结果")
+    parser.add_argument("--change-threshold", type=float, default=0.35,
+                        help="最后网格化判断网格是否变化的阈值，1即如果网格中像素比例超过该阈值则判定该网格为变化区域。")
+    parser.add_argument("--block-size", type=float, default=50,
+                        help="变化区域网格化的大小。")
     opt = parser.parse_args()
     return opt
 
 
-def detect_change(image0, image1, include_class=[0, 1], identify_classes=[2, 3, 4, 5, 7]):
+def detect_change(image0, image1, include_class=[1, 2], identify_classes=[3, 4, 5, 6, 7, 8]):
     """
     指定要检测的标签，检测image 1相比image 0中农田区域变化成指定标签地形的区域。
 
@@ -54,45 +57,59 @@ if __name__ == "__main__":
     args = get_parser()
 
     # 判断是否要将输出打印到控制台
-    if not args.console_output:
+    if args.log_output:
         f_handler = open('./out_detect_change.log', 'w', encoding='utf-8')
         __console__ = sys.stdout
         sys.stdout = f_handler
         print('输出输入到日志中!')
 
-    target_dir = args.target_path
-
-    # 输入两年份的图片
-    image_2020_list = glob(os.path.join(target_dir, "2020*0.5.tif"))
-    image_2021_list = [item.replace("2020", "2021") for item in image_2020_list]
-
     # 导入模型参数
     data, model = RSPipeline.load_model(args.model_info_path, device=args.device)
+    model.half()
     IMAGE_SIZE = data['image_size'][0]
     num_classes = data['num_classes']
-
+    ind2label = data['index to label']
     # 建立结果存放的文件夹
-    os.makedirs(args.output_path + "/change_result", exist_ok=True)
-    os.makedirs(args.output_path + "/tif", exist_ok=True)
-    os.makedirs(args.output_path + "/shp", exist_ok=True)
+    os.makedirs(args.output_dir + "/change_result", exist_ok=True)
+    os.makedirs(args.output_dir + "/tif", exist_ok=True)
+    os.makedirs(args.output_dir + "/shp", exist_ok=True)
 
+    assert args.mode in ["segment-semantic", "detect-change"], \
+        "Wrong process mode. Available options are: ['segment-semantic', 'detect-change']"
     if args.mode == "segment-semantic":
-        test_semantic_single_file(model, "./test4.tif")
+        if "*" in args.file_path:
+            test_semantic_segment_files(model,
+                                        ind2label,
+                                        args.target_dir + "/" + args.file_path,
+                                        IMAGE_SIZE,
+                                        num_classes,
+                                        args.device)
+        else:
+            test_semantic_single_file(model,
+                                      ind2label,
+                                      args.target_dir + "/" + args.file_path,
+                                      IMAGE_SIZE,
+                                      num_classes,
+                                      args.device)
     elif args.mode == "detect-change":
+        # 输入两年份的图片
+        image_2020_list = glob(os.path.join(args.target_dir, args.file_path))
+        image_2021_list = [item.replace("2020", "2021") for item in image_2020_list]
+        print(image_2021_list)
         # 进行变化识别
         tif_paths = []
         for i, (image_2020, image_2021) in enumerate(zip(image_2020_list, image_2021_list)):
             place, part = image_2020.split("_")[-4], image_2020.split("_")[-3]
-            tif_path = args.output_path + f"/tif/detect_change_{place}_{part}.tif"
-            shp_path = args.output_path + f"change_result/detect_change_{place}_{part}.shp"
+            tif_path = args.output_dir + f"/tif/detect_change_{place}_{part}.tif"
+            shp_path = args.output_dir + f"/change_result/detect_change_{place}_{part}.shp"
             semantic_result_2020 = test_big_image(model, image_2020,
                                                   IMAGE_SIZE, num_classes,
                                                   args.device,
-                                                  batch_size=20)
+                                                  batch_size=4)
             semantic_result_2021 = test_big_image(model, image_2021,
                                                   IMAGE_SIZE, num_classes,
                                                   args.device,
-                                                  batch_size=20)
+                                                  batch_size=4)
             RSPipeline.print_log("两年份遥感数据语义分割已完成")
             image = gdal.Open(image_2020)
             change_result = detect_change(semantic_result_2020, semantic_result_2021)

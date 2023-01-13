@@ -3,6 +3,8 @@ from numpy import random
 import torch
 import numpy as np
 import warnings
+import matplotlib.pyplot as plt
+
 
 # 忽略警告信息
 warnings.filterwarnings('ignore')
@@ -21,3 +23,14 @@ def seed_it(seed):
 
 
 seed_it(1)
+
+# 控制图像字体大小
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+plt.rc('xtick', labelsize=10)
+plt.rc('ytick', labelsize=20)
+
+font1 = {'family': 'SimHei',
+         'weight': 'normal',
+         'size': 20,
+         }

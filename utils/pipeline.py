@@ -1,26 +1,25 @@
 import gc
 import os.path
 from glob import glob
+from os import path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import yaml
 from PIL import Image
-from osgeo import gdal
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import f1_score
+from segmentation_models_pytorch.losses import DiceLoss
+from sklearn.metrics import accuracy_score, f1_score
 from torch.optim.swa_utils import AveragedModel
 from torch.utils.data import DataLoader
 from torchinfo import summary
 from tqdm import tqdm
 
-from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from models import lovasz_losses as L
-from models.hrnet import hrnet18
+from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
 from utils.datasets import SSDataRandomCrop
-from utils.polygon_utils import get_mask
+from utils.polygon_utils import read_shp, shp2tif
 from utils.visualize_result import ResultVisualization
 
 os.makedirs("./real_data/semantic_mask", exist_ok=True)
@@ -53,15 +52,17 @@ class RSPipeline(object):
         self.image_size = args.image_size[0]
         self.device = args.device
         self.model_name = args.model_name
+        self.pretrained_model_path = args.pretrained_model_path
         self.model_save_path = args.model_save_path
         self.fp16 = args.fp16
         self.epochs = args.epochs
         self.train_size = args.train_size
         self.val_size = args.val_size
-        self.data_path = args.data
+        self.label_path = args.label
         self.num_workers = args.num_workers
+        self.pop_head = args.pop_head
         self.ohem = args.ohem
-        self.swa_model, self.model, self.optimizer = self.init_model()
+        self.model, self.optimizer = self.init_model()
         self.output_model_info()
         self.train_loader, self.val_loader = self.build_dataset()
 
@@ -71,19 +72,15 @@ class RSPipeline(object):
 
         :return:
         """
-        if self.model_name != "hrnet18":
-            model = get_semantic_segment_model(num_classes=self.num_classes,
-                                               model_name=self.model_name,
-                                               device=self.device,
-                                               pretrained_path=self.model_save_path)
-        else:
-            model = hrnet18(num_classes=self.num_classes, pretrained=False)
-        model = model.to(self.device)
+        model = get_semantic_segment_model(num_classes=self.num_classes,
+                                           model_name=self.model_name,
+                                           device=self.device,
+                                           pretrained_path=self.pretrained_model_path,
+                                           pop_head=self.pop_head)
         # 优化器，使用adamw优化器
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-        swa_model = AveragedModel(model).to(self.device)
         RSPipeline.print_log("模型创建完毕")
-        return swa_model, model, optimizer
+        return model, optimizer
 
     def change_resolution(self, image_size):
         """
@@ -102,7 +99,7 @@ class RSPipeline(object):
 
         :return:
         """
-        mask_paths = glob(self.data_path + "/*.tif")
+        mask_paths = glob(self.label_path)
         mask_paths = [RSPipeline.check_path(path) for path in mask_paths]
         image_paths = [path.replace("semantic_mask", "processed_data")
                        for path in mask_paths]
@@ -160,7 +157,6 @@ class RSPipeline(object):
         """
         训练函数
 
-        :param epoch:
         :param scaler:
         :return:
         """
@@ -186,10 +182,7 @@ class RSPipeline(object):
                 from torch.cuda.amp import autocast
                 with autocast():
                     output = nn.Softmax(dim=1)(self.model(img1))
-                    if self.ohem:
-                        losses = edge_ce_dice_loss(output, labels, self.ign_lab, self.ohem)
-                    else:
-                        losses = L.lovasz_softmax(output, labels)
+                    losses = edge_ce_dice_loss(output, labels, self.ign_lab, self.ohem)
                 scaler.scale(losses).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
@@ -258,10 +251,10 @@ class RSPipeline(object):
 
         # 余弦退火调整学习率
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer,
-            T_0=2,  # T_0就是初始restart的epoch数目
-            T_mult=2,  # T_mult就是重启之后因子,即每个restart后，T_0 = T_0 * T_mult
-            eta_min=1e-5  # 最低学习率
+                self.optimizer,
+                T_0=2,  # T_0就是初始restart的epoch数目
+                T_mult=2,  # T_mult就是重启之后因子,即每个restart后，T_0 = T_0 * T_mult
+                eta_min=1e-5  # 最低学习率
         )
 
         best_acc = 0
@@ -270,22 +263,30 @@ class RSPipeline(object):
             train_loss, train_acc = self.train_fn(scaler)
             valid_acc, valid_f1 = self.eval_fn(visualize)
             RSPipeline.print_log(
-                '|EPOCH {}| TRAIN_LOSS {}| TRAIN_F1_SCORE {}| VALID_ACC {}|  VALID_F1_SCORE {}|'.format(
-                    epoch + 1, train_loss.avg, train_acc.avg, valid_acc.avg, valid_f1.avg))
+                    '|EPOCH {}| TRAIN_LOSS {}| TRAIN_F1_SCORE {}| VALID_ACC {}|  VALID_F1_SCORE {}|'.format(
+                            epoch + 1, train_loss.avg, train_acc.avg, valid_acc.avg, valid_f1.avg))
             scheduler.step()
-            if valid_f1.avg > best_acc and epoch > 10:
+            if valid_f1.avg > best_acc and epoch > 3:
                 best_acc = valid_f1.avg
                 RSPipeline.print_log(f"在当前训练轮数中找到最佳模型，训练轮数为{epoch + 1}")
-                self.swa_model.update_parameters(self.model)
                 torch.save(self.model.state_dict(), self.model_save_path)
                 RSPipeline.print_log("保存模型中")
+                self.update_model_score("f1-score", best_acc)
 
-        # Update bn statistics for the swa_model at the end
-        torch.optim.swa_utils.update_bn(self.train_loader, self.swa_model)
-        torch.save(self.swa_model.state_dict(), self.model_save_path.replace(".pth", "last.pth"))
-        RSPipeline.print_log("最终混合模型保存中")
         RSPipeline.print_log("训练过程结束")
         gc.collect()
+
+    def update_model_score(self, score_name, score):
+        """
+        输出模型参数为yaml文件
+
+        :return:
+        """
+        with open(self.model_save_path.replace("pth", "yaml"), "r", encoding="utf-8") as f:
+            data = yaml.load(f, Loader=yaml.FullLoader)
+        data[score_name] = score
+        with open(self.model_save_path.replace("pth", "yaml"), "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False)
 
     def output_model_info(self):
         """
@@ -293,17 +294,17 @@ class RSPipeline(object):
 
         :return:
         """
-        to_yaml = {"image_size": [self.image_size, self.image_size],
+        to_yaml = {"image_size":        [self.image_size, self.image_size],
                    "ignore background": self.ignore_background,
-                   "index to label": self.ind2label,
-                   "device": self.device,
-                   "epochs": self.epochs,
-                   "model_name": self.model_name,
-                   "save_path": self.model_save_path,
-                   "num_classes": self.num_classes,
-                   "batch_size": self.batch_size,
-                   "OHEM loss": self.ohem,
-                   "fp16training": self.fp16
+                   "index to label":    self.ind2label,
+                   "device":            self.device,
+                   "epochs":            self.epochs,
+                   "model_name":        self.model_name,
+                   "save_path":         self.model_save_path,
+                   "num_classes":       self.num_classes,
+                   "batch_size":        self.batch_size,
+                   "OHEM loss":         self.ohem,
+                   "fp16training":      self.fp16
                    }
         if os.path.exists(self.model_save_path.replace("pth", "yaml")):
             os.remove(self.model_save_path.replace("pth", "yaml"))
@@ -325,14 +326,10 @@ class RSPipeline(object):
         pretrained_path = data['save_path']
         model_name = data['model_name']
 
-        if model_name != "hrnet18":
-            model = get_semantic_segment_model(num_classes=num_classes,
-                                               model_name=model_name,
-                                               device=device,
-                                               pretrained_path=pretrained_path)
-        else:
-            model = hrnet18(num_classes=num_classes, pretrained=False)
-            model.load_state_dict(torch.load(pretrained_path, map_location=device))
+        model = get_semantic_segment_model(num_classes=num_classes,
+                                           model_name=model_name,
+                                           device='cpu',
+                                           pretrained_path=pretrained_path)
 
         model.to(device)
         model.eval()
@@ -366,9 +363,8 @@ class RSPipeline(object):
         """
         提供年份，地点，块标号以及矢量文件地址，将矢量文件批量转换为像素标签
 
-        :param year:
-        :param place:
-        :param part:
+        :param args:
+        :param image_path:
         :param num_classes:
         :param shp_path:
         :param ind2num:
@@ -376,18 +372,30 @@ class RSPipeline(object):
         """
         RSPipeline.print_log("开始更新矢量标签数据为像素标签数据")
         # 获取所有填充后的标签的保存路径
-        save_path = args.label + image_path.split('/')[-1]
-
-        image = gdal.Open(image_path)
-        image_shape = image.ReadAsArray().shape
-        # 初始化标签
-        mask = num_classes * np.ones((image_shape[1], image_shape[2]))
-        # 根据对应的shp文件将标签进行填充
-        mask = get_mask(image, mask, shp_path, ind2num)
-        # 将标签转为Image形式，方便保存
-        mask = Image.fromarray(mask.astype(np.uint8))
-        RSPipeline.check_file(save_path)
-        mask.save(save_path)
+        save_path = path.join("/".join(args.label.split('/')[:-1]), image_path.split('/')[-1])
+        print(save_path)
+        shp_file = read_shp(shp_path)
+        columns = shp_file.columns
+        print(columns)
+        # shp_file = shp_file[shp_file[columns[0]].notnull()]
+        # shp_file = shp_file[shp_file[columns[0]].notna()]
+        # shp_file.iloc[:, 0] = shp_file.iloc[:, 0].apply(lambda x: ind2num[str(x)[:2]])
+        # shp_file.to_file(shp_path)
+        shp2tif(shp_path=shp_path,
+                refer_tif_path=image_path,
+                target_tif_path=save_path,
+                attribute_field=columns[0],
+                nodata_value=0)
+        # image = gdal.Open(image_path)
+        # image_shape = image.ReadAsArray().shape
+        # # 初始化标签
+        # mask = num_classes * np.ones((image_shape[1], image_shape[2]))
+        # # 根据对应的shp文件将标签进行填充
+        # mask = get_mask(image, mask, shp_path, ind2num)
+        # # 将标签转为Image形式，方便保存
+        # mask = Image.fromarray(mask.astype(np.uint8))
+        # RSPipeline.check_file(save_path)
+        # mask.save(save_path)
         RSPipeline.print_log("更新结果完毕，数据已保存")
 
     @staticmethod

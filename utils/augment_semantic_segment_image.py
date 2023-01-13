@@ -1,13 +1,16 @@
+from math import *
+
 import cv2
 import numpy as np
 from glob import glob
 from PIL import Image
+from matplotlib import pyplot as plt
 
 from utils.transfer_style import style_transfer
 
-
 image_list = glob("./real_data/processed_data/*0.8.tif")
 image_list = [np.array(Image.open(path)) for path in image_list]
+
 
 ## data augmentation
 # 随机调节色调、饱和度值
@@ -72,6 +75,32 @@ def randomShiftScaleRotate(image_A, mask,
     return image_A, mask
 
 
+def rotate_bound(image, mask, ratio=0.5):
+    if np.random.random() < ratio:
+        angle = np.random.randint(-15, 15)
+        # grab the dimensions of the image and then determine the
+        # center
+        (h, w) = image.shape[:2]
+        rotate_center = (w / 2, h / 2)
+
+        # grab the rotation matrix (applying the negative of the
+        # angle to rotate clockwise), then grab the sine and cosine
+        # (i.e., the rotation components of the matrix)
+        M = cv2.getRotationMatrix2D(rotate_center, angle, 1.0)
+        # 计算图像新边界
+        nH = int(w * fabs(sin(radians(angle))) + h * fabs(cos(radians(angle))))
+        nW = int(h * fabs(sin(radians(angle))) + w * fabs(cos(radians(angle))))
+        # 调整旋转矩阵以考虑平移
+        M[0, 2] += (nW - w) / 2
+        M[1, 2] += (nH - h) / 2
+
+        # perform the actual rotation and return the image'
+        image, mask = cv2.warpAffine(image, M, (nW, nH)), cv2.warpAffine(mask, M, (nW, nH))
+        image = cv2.resize(image, (w, h), interpolation=cv2.INTER_NEAREST)
+        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+    return image, mask
+
+
 def randomStyleTransfer(image_A, ratio):
     if np.random.random() < ratio:
         image = np.random.choice(image_list)
@@ -103,7 +132,7 @@ def randomRotate90(image_A, mask, ratio=0.5):
     return image_A, mask
 
 
-def data_agu_ss(image_A, label, ratio=0.3):
+def data_agu_ss(image_A, label, ratio=0.5):
     """
     对图像数据集进行数据增强
 
@@ -123,4 +152,14 @@ def data_agu_ss(image_A, label, ratio=0.3):
 
     image_A, label = randomRotate90(image_A, label, ratio)
 
+    image_A, label = rotate_bound(image_A, label, ratio)
+
     return image_A, label
+
+
+if __name__ == "__main__":
+    tif = Image.open("../real_data/test.tif")
+    tif = np.array(tif)
+    tif = rotate_bound(tif, 15)
+    # plt.imshow(tif)
+    # plt.show()

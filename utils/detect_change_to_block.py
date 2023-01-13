@@ -1,10 +1,9 @@
 from glob import glob
 
-import matplotlib.pyplot as plt
-import numpy as np
 from osgeo import gdal
 
 from utils.polygon_utils import raster2vector
+from config import *
 
 gdal.AllRegister()  # 先载入数据驱动，也就是初始化一个对象，让它“知道”某种数据结构，但是只能读，不能写
 
@@ -29,9 +28,10 @@ def distribute_count(array):
     list = []
     for i in range(np.max(array) + 1):
         list.append(np.sum(array == i))
-    # plt.bar(np.arange(np.max(array) + 1), list)
-    # plt.show()
-    return np.argmax(list[1:])
+    if len(list) > 1:
+        return np.argmax(list[1:])
+    else:
+        return 0
 
 
 def judge(array_in, s, block_size):
@@ -46,16 +46,16 @@ def judge(array_in, s, block_size):
     index = distribute_count(array_in)
     if (count / block_size / block_size) >= s:
         array1 = np.ones_like(array_in) * index
-        array1[0, :] = 0
-        array1[-1, :] = 0
-        array1[:, 0] = 0
-        array1[:, -1] = 0
+        # array1[0, :] = 0
+        # array1[-1, :] = 0
+        # array1[:, 0] = 0
+        # array1[:, -1] = 0
     else:
         array1 = np.zeros_like(array_in)
-        array1[0, :] = 1
-        array1[-1, :] = 1
-        array1[:, 0] = 1
-        array1[:, -1] = 1
+        # array1[0, :] = 1
+        # array1[-1, :] = 1
+        # array1[:, 0] = 1
+        # array1[:, -1] = 1
     return array1
 
 
@@ -136,15 +136,16 @@ def ARR2TIF(data, origin_dataset, origin_proj, out_filepath):
 
 if __name__ == "__main__":
     s = 0.35  # 判定阈值
-    in_filepath = glob(f"../output/semantic_result/tif/detect_change_*.tif")
+    block_size = 100
+    in_filepath = glob(f"../output/semantic_result/tif/detect_change_2_2.tif")
     out_tif_filepath = [item.replace("/tif/", "/change_result/")
-                            .replace("detect_change", "detect_change_block") for item in
+                            .replace("detect_change", f"detect_change_block_{str(block_size)}") for item in
                         in_filepath]
 
     out_shp_filepath = [item.replace(".tif", ".shp") for item in out_tif_filepath]
     for i, (in_file, out_tif, out_shp) in enumerate(zip(in_filepath, out_tif_filepath,
                                                         out_shp_filepath)):
-        change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(in_file, block_size=50)
-        arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, s, block_size=50)
+        change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(in_file, block_size=block_size)
+        arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, s, block_size=block_size)
         ARR2TIF(arrayout, change_data, origin_proj, out_tif)
         raster2vector(raster_path=out_tif, vector_path=out_shp)

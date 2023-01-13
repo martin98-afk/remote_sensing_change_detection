@@ -12,7 +12,8 @@ class SSDataRandomCrop(Dataset):
     """
         根据大遥感地图随机裁剪的语义分割数据集，包含训练、验证、测试三部分数据集的构建。
     """
-    def __init__(self, image_list, mask_list, mode, length, img_size=512):
+
+    def __init__(self, image_list, mask_list, mode, length, img_size=512, train_test_split=0.8):
         """
 
         :param image_list: 图像数据集
@@ -27,6 +28,7 @@ class SSDataRandomCrop(Dataset):
         self.mask_list = mask_list
         self.img_size = img_size
         self.length = length
+        self.train_test_split = train_test_split
         self.normalize = transforms.Compose([
             transforms.ToTensor(),
         ])
@@ -36,19 +38,21 @@ class SSDataRandomCrop(Dataset):
             return self.image_list[index], self.normalize(self.image_list[index])
         else:
             select_index = np.random.randint(len(self.image_list))
-            image = self.image_list[select_index]
-            mask = self.mask_list[select_index]
+            image = self.image_list[select_index].copy()
+            mask = self.mask_list[select_index].copy()
             image_shape = image.shape
             size = self.img_size
             if self.mode == "train":
-                x_rd = int(np.random.random() * (int(image_shape[0] * 0.8) - size))
+                x_rd = int(
+                    np.random.random() * (int(image_shape[0] * self.train_test_split) - size))
                 y_rd = int(np.random.random() * (image_shape[1] - size))
                 image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
                 mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
                 image, mask = data_agu_ss(image, mask)
             elif self.mode == "val":
-                x_rd = int(np.random.random() * (int(image_shape[0] * 0.2) - size)) + int(
-                    image_shape[0] * 0.8)
+                x_rd = int(np.random.random() * (
+                            int(image_shape[0] * (1 - self.train_test_split)) - size)) + int(
+                        image_shape[0] * self.train_test_split)
                 y_rd = int(np.random.random() * (image_shape[1] - size))
                 image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
                 mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
@@ -100,4 +104,3 @@ class SSData(Dataset):
 
     def __len__(self):
         return len(self.ids)
-

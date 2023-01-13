@@ -19,8 +19,10 @@ class ModelMeasurement(object):
         with open(model_info_path, 'r') as f:
             data = yaml.load(f, Loader=yaml.FullLoader)
         ind2label = data['index to label']
-        self.num2label = {i: v for i, (k, v) in enumerate(ind2label.items())}
-        self.num_classes = data["num_classes"] - 1
+        ind2label['00'] = '其他'
+        ind2label = sorted(ind2label.items(), key=lambda x: x[0])
+        self.num2label = {i: v for i, (k, v) in enumerate(ind2label)}
+        self.num_classes = data["num_classes"]
 
     # 保存图⽚完整
     def show_acc(self, real_filepath_list, pred_filepath_list):
@@ -65,7 +67,7 @@ class ModelMeasurement(object):
         #  返回交并比IoU
         intersection = np.diag(confusionMatrix)
         union = np.sum(confusionMatrix, axis=1) + np.sum(confusionMatrix, axis=0) - np.diag(
-            confusionMatrix)
+                confusionMatrix)
         IoU = intersection / union
         return IoU
 
@@ -73,7 +75,7 @@ class ModelMeasurement(object):
         #  返回平均交并比mIoU
         intersection = np.diag(confusionMatrix)
         union = np.sum(confusionMatrix, axis=1) + np.sum(confusionMatrix, axis=0) - np.diag(
-            confusionMatrix)
+                confusionMatrix)
         IoU = intersection / union
         mIoU = np.nanmean(IoU)
         return mIoU

@@ -1,7 +1,5 @@
-import gc
 from glob import glob
 
-import matplotlib.pyplot as plt
 from PIL import Image
 from osgeo import gdal
 from torch.utils.data import DataLoader
@@ -24,17 +22,17 @@ np.random.seed(0)
 PAD_SIZE = 64  # 预测图像之间的重叠距离
 
 post_processor = DenseCRF(
-    iter_max=10,  # 10
-    pos_xy_std=3,  # 3
-    pos_w=3,  # 3
-    bi_xy_std=140,  # 121, 140
-    bi_rgb_std=5,  # 5, 5
-    bi_w=5,  # 4, 5
+        iter_max=10,  # 10
+        pos_xy_std=3,  # 3
+        pos_w=3,  # 3
+        bi_xy_std=(80, 80),  # 121, 140
+        bi_rgb_std=13,  # 5, 5
+        bi_w=10,  # 4, 5
 )
 
 
 def predict(model, image, ori_image, num_classes, device, threashold=0.2):
-    image = image.to(device).float()
+    image = image.to(device).half()
     with torch.no_grad():
         output = torch.nn.Softmax(dim=1)(model(image))
         output = output.detach().cpu().numpy()
@@ -227,6 +225,7 @@ def concat_result(shape, TifArrayShape, npyfile, RepetitiveLength, RowOver, Colu
     return result
 
 
+@torch.no_grad()
 def test_big_image(model, image1_path, IMAGE_SIZE,
                    num_classes, device, batch_size=24,
                    cut_length=64):
@@ -268,7 +267,12 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
     return result_data
 
 
-def test_semantic_segment_files(model, file_path='./real_data/processed_data/2020_2_*_res_0.5.tif'):
+def test_semantic_segment_files(model,
+                                ind2label,
+                                file_path,
+                                img_size,
+                                num_classes,
+                                device):
     """
 
 
@@ -276,27 +280,32 @@ def test_semantic_segment_files(model, file_path='./real_data/processed_data/202
     :param file_path:
     :return:
     """
-    image_2020_list = glob(file_path)
-    loc_list = [path.split('/')[-1].split('_')[:5] for path in image_2020_list]
+    image_2020_list = [RSPipeline.check_path(path) for path in glob(file_path)]
+    file_list = [path[:-4].split('/')[-1] for path in image_2020_list]
     for i, image_2020 in enumerate(image_2020_list):
-        semantic_result = test_big_image(model, image_2020, IMAGE_SIZE, num_classes, device)
+        semantic_result = test_big_image(model, image_2020, img_size, num_classes, device,
+                                         batch_size=12)
         RSPipeline.print_log("语义分割已完成")
         image = gdal.Open(image_2020)
 
-        tif_path = f"./output/semantic_result/tif/{loc_list[i][0]}_" \
-                   f"{loc_list[i][1]}_{loc_list[i][2]}_res_{loc_list[i][4]}_semantic_result.tif"
-        shp_path = f"./output/semantic_result/shp/{loc_list[i][0]}_" \
-                   f"{loc_list[i][1]}_{loc_list[i][2]}_res_{loc_list[i][4]}_semantic_result.shp"
+        tif_path = f"./output/semantic_result/tif/{file_list[i]}_semantic_result.tif"
+        shp_path = f"./output/semantic_result/shp/{file_list[i]}_semantic_result.shp"
+
         write_img(tif_path,
                   image.GetProjection(),
                   image.GetGeoTransform(),
                   semantic_result.reshape((1, semantic_result.shape[0], semantic_result.shape[1])))
         RSPipeline.print_log("分割结果栅格数据保存已完成")
-        raster2vector(raster_path=tif_path, vector_path=shp_path)
+        raster2vector(raster_path=tif_path, vector_path=shp_path, label=ind2label)
         RSPipeline.print_log("分割结果矢量数据保存已完成")
 
 
-def test_semantic_single_file(model, file_path):
+def test_semantic_single_file(model,
+                              ind2label,
+                              file_path,
+                              img_size,
+                              num_classes,
+                              device):
     """
 
 
@@ -304,28 +313,17 @@ def test_semantic_single_file(model, file_path):
     :param file_path:
     :return:
     """
-    semantic_result = test_big_image(model, file_path, IMAGE_SIZE, num_classes, device)
+    semantic_result = test_big_image(model, file_path,
+                                     img_size, num_classes,
+                                     device, batch_size=12)
     RSPipeline.print_log("语义分割已完成")
-    tif_path = f"./output/semantic_result/tif/test_semantic_result.tif"
-    shp_path = f"./output/semantic_result/shp/test_semantic_result.shp"
+    tif_path = f"./output/semantic_result/tif/{file_path.split('/')[-1][:-4]}_semantic_result.tif"
+    shp_path = f"./output/semantic_result/shp/{file_path.split('/')[-1][:-4]}_semantic_result.shp"
     image = gdal.Open(file_path)
     write_img(tif_path,
               image.GetProjection(),
               image.GetGeoTransform(),
               semantic_result.reshape((1, semantic_result.shape[0], semantic_result.shape[1])))
     RSPipeline.print_log("分割结果栅格数据保存已完成")
-    raster2vector(raster_path=tif_path, vector_path=shp_path)
+    raster2vector(raster_path=tif_path, vector_path=shp_path, label=ind2label)
     RSPipeline.print_log("分割结果矢量数据保存已完成")
-
-if __name__ == "__main__":
-    device = "cuda"
-    data, model = RSPipeline.load_model("./output/ss_eff_b0.yaml", device=device)
-    IMAGE_SIZE = data['image_size'][0]
-    num_classes = data['num_classes']
-    # 读取指定路径下的单个文件进行语义分割
-    # test_semantic_single_file(model, "./test4.tif")
-    # 读取glob格式的所有文件进行语义分割
-    test_semantic_segment_files(model,
-                                file_path='./real_data/processed_data/2020_2_*_res_0.5.tif')
-    del model
-    gc.collect()

@@ -7,10 +7,10 @@ from utils.calculate_acc import *
 
 if __name__ == "__main__":
     RSPipeline.print_log("读取对应模型训练的标签信息")
-    info_path = "./output/ss_eff_b0.yaml"
+    info_path = "./output/ss_eff_b0_new.yaml"
 
-    real_filelist_path = glob("./real_data/semantic_mask/*0.5.png")
-    pred_filelist_path = [item.replace(".png", "_semantic_result.tif")
+    real_filelist_path = glob("./real_data/semantic_mask/2020_2*0.5.tif")
+    pred_filelist_path = [item.replace(".tif", "_semantic_result.tif")
                               .replace("real_data/semantic_mask", "output/semantic_result/tif")
                           for item in real_filelist_path]
     model_measure = ModelMeasurement(info_path)

@@ -1,15 +1,20 @@
-import os
+from glob import glob
 
 import cv2
 import geopandas
+import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from osgeo import osr, gdal, ogr
 
 from config import *
 
+# def add_label(vector_path)
+from utils.gdal_utils import write_img
 
-def raster2vector(raster_path, vector_path, field_name='class', ignore_vales=None):
+
+def raster2vector(raster_path, vector_path, label=None,
+                  field_name='class', ignore_vales=None):
     """
     该代码文件包括所有任务检测结果的保存，主要为遥感图像分类结果栅格数据转换为矢量数据，并保存结果
     遥感图像像素级别分类（语义分割）结果是栅格图像，转成矢量shp更方便在arcgis中自定义展示，
@@ -40,9 +45,8 @@ def raster2vector(raster_path, vector_path, field_name='class', ignore_vales=Non
     # 添加浮点型字段，用来存储栅格像素值
     field = ogr.FieldDefn(field_name, ogr.OFTReal)
     poly_layer.CreateField(field)
-
     # FPolygonize将每个襄垣转成一个矩形，然后将相似的像元进行合并
-    gdal.FPolygonize(band, None, poly_layer, 0)
+    gdal.Polygonize(band, None, poly_layer, 0)
 
     if ignore_vales is not None:
         for feature in poly_layer:
@@ -53,6 +57,15 @@ def raster2vector(raster_path, vector_path, field_name='class', ignore_vales=Non
                     break
     polygon.SyncToDisk()
     polygon = None
+
+    if label is not None:
+        shp_file = read_shp(vector_path, encoding='gbk')
+        label = ["其他"] + list(label.values())
+        out_label = []
+        for i in range(shp_file.shape[0]):
+            out_label.append(label[int(shp_file['class'].iloc[i])])
+        shp_file.insert(shp_file.shape[1], 'label', out_label)
+        shp_file.to_file(vector_path, encoding='gb18030')
 
 
 def get_tif_meta(tif_path):
@@ -74,7 +87,9 @@ def get_tif_meta(tif_path):
     return width, height, geotrans, proj
 
 
-def shp2tif(shp_path, refer_tif_path, target_tif_path, attribute_field="class", nodata_value=0):
+def shp2tif(shp_path, refer_tif_path, target_tif_path,
+            attribute_field="class", nodata_value=0,
+            return_tif=False):
     """
     使用gdal将矢量文件转换为栅格文件。
 
@@ -92,11 +107,11 @@ def shp2tif(shp_path, refer_tif_path, target_tif_path, attribute_field="class", 
     shp_layer = shp_file.GetLayer()
     # 创建栅格
     target_ds = gdal.GetDriverByName('GTiff').Create(
-        utf8_path=target_tif_path,  # 栅格地址
-        xsize=width,  # 栅格宽
-        ysize=height,  # 栅格高
-        bands=1,  # 栅格波段数
-        eType=gdal.GDT_Byte  # 栅格数据类型
+            utf8_path=target_tif_path,  # 栅格地址
+            xsize=width,  # 栅格宽
+            ysize=height,  # 栅格高
+            bands=1,  # 栅格波段数
+            eType=gdal.GDT_Byte  # 栅格数据类型
     )
     # 将参考栅格的仿射变换信息设置为结果栅格仿射变换信息
     target_ds.SetGeoTransform(geotrans)
@@ -109,13 +124,15 @@ def shp2tif(shp_path, refer_tif_path, target_tif_path, attribute_field="class", 
 
     # 栅格化函数
     gdal.RasterizeLayer(
-        dataset=target_ds,  # 输出的栅格数据集
-        bands=[1],  # 输出波段
-        layer=shp_layer,  # 输入待转换的矢量图层
-        options=[f"ATTRIBUTE={attribute_field}"]  # 指定字段值为栅格值
+            dataset=target_ds,  # 输出的栅格数据集
+            bands=[1],  # 输出波段
+            layer=shp_layer,  # 输入待转换的矢量图层
+            options=[f"ATTRIBUTE={attribute_field}"]  # 指定字段值为栅格值
     )
-
-    del target_ds
+    if return_tif:
+        return target_ds
+    else:
+        del target_ds
 
 
 def getSRSPair(dataset):
@@ -164,18 +181,21 @@ def coord2pixel(coords, geotrans):
     return coords.astype(np.int)
 
 
-def read_shp(path):
+def read_shp(path, encoding='utf-8'):
     """
     读取shp文件，对于不同分类体系进行不同的提取。
 
-    :param path:
+    :param encoding: 读取文件的编码方式
+    :param path: 读取文件的路径
     :return:
     """
-    file = geopandas.read_file(path, encoding='utf-8')
+    file = geopandas.read_file(path, encoding=encoding)
     if "DLBM" in file.columns:
         return file[['DLBM', 'geometry']]
     elif "CC" in file.columns:
         return file[['CC', 'geometry']]
+    else:
+        return file[['class', 'geometry']]
 
 
 def merge_shape_file(shp_file1_list, save_path):
@@ -238,6 +258,7 @@ def get_mask(image, mask, shp_path, ind2num):
     """
     提供遥感影像，准备填充的mask矩阵，以及对应的shp文件路径，即可按照shp文件与遥感影像的重叠区域获得相应的语义分割结果。
 
+    :param ind2num:
     :param image:
     :param mask:
     :param shp_path:
@@ -262,27 +283,48 @@ def get_mask(image, mask, shp_path, ind2num):
 
 
 if __name__ == "__main__":
-    refer_image_path = "/home/xwtech/遥感识别专用/real_data/影像数据/2020_1.tif"
-    save_path = refer_image_path.replace("影像数据", "semantic_mask")
+    # # 从大类标注文件中提取耕地图斑
+    # shp_file = read_shp("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_major_class.shp")
+    # shp_file = shp_file[shp_file.iloc[:, 0] == 1]
+    # shp_file.to_file("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_farmland.shp")
+    # refer_image_path = glob("../real_data/processed_data/2020_1_*_res_0.5.tif")
+    # save_path = [path.replace("processed_data", "semantic_mask")
+    #                  .replace(".tif", "_farmland.tif") for path in refer_image_path]
+    # # 将耕地矢量图斑文件转为栅格数据
+    # for image_path, save in zip(refer_image_path, save_path):
+    #     shp2tif(shp_path="../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_farmland.shp",
+    #             refer_tif_path=image_path,
+    #             target_tif_path=save,
+    #             attribute_field="DLBM",
+    #             nodata_value=0)
+    # # 使用栅格数据作为mask从2020年和2021年的图像之中提取对应图斑部分
+    # refer_image_path = glob("../real_data/processed_data/202*_1_*_res_0.5.tif")
+    # save_path = [path.replace("processed_data", "semantic_mask")
+    #                  .replace(".tif", "_farmland.tif")
+    #                  .replace("2021", "2020") for path in refer_image_path]
+    # for path1, path2 in zip(refer_image_path, save_path):
+    #     image = gdal.Open(path1)
+    #     mask = Image.open(path2)
+    #     mask = np.array(mask)
+    #     mask = np.repeat(mask[..., np.newaxis], 3, 2)
+    #     image_array = np.transpose(image.ReadAsArray(), (1, 2, 0))
+    #     image_array[mask == 0] = 0
+    #     write_img(path1.replace(".tif", "_farmland.tif"), image.GetProjection(),
+    #               image.GetGeoTransform(),
+    #               np.transpose(image_array, (2, 0, 1)))
 
-    shp2tif(shp_path="../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1.shp",
-            refer_tif_path=refer_image_path,
-            target_tif_path=save_path,
-            attribute_field="DLBM",
-            nodata_value=-1)
-    # image = gdal.Open(image_paths)
-    # image_shape = image.ReadAsArray().shape
-    # mask = 7 * np.ones((image_shape[1], image_shape[2]))
+    # TODO 测试将变化检测出的小方块映射到耕地图斑之上
+    shp_file = read_shp("../output/semantic_result/change_result/detect_change_block_1_4.shp")
+    tif = shp2tif(shp_path="../output/semantic_result/change_result/detect_change_block_1_4.shp",
+                  refer_tif_path="../real_data/processed_data/2020_1_4_res_0.5.tif",
+                  target_tif_path="../output/semantic_result/tif/detect_change_block_1_4.tif",
+                  attribute_field="class",
+                  nodata_value=0,
+                  return_tif=True)
+    tif_array = tif.ReadAsArray()
 
-    # mask = \
-    #     get_mask(image, mask,
-    #              "../real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2.shp")
-    #
-    # mask = \
-    #     get_mask(image, mask,
-    #              "../real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2_1.shp")
-
-    # mask = Image.fromarray(mask.astype(np.uint8))
-    # mask.save(save_paths)
-    # plt.imshow(mask)
-    # plt.show()
+    mask = Image.open("../real_data/semantic_mask/2020_1_4_res_0.5_farmland.tif")
+    mask = np.array(mask)
+    tif_array[mask == 0] = 0
+    plt.imshow(tif_array)
+    plt.show()
