@@ -2,14 +2,8 @@ from math import *
 
 import cv2
 import numpy as np
-from glob import glob
 from PIL import Image
 from matplotlib import pyplot as plt
-
-from utils.transfer_style import style_transfer
-
-image_list = glob("./real_data/processed_data/*0.8.tif")
-image_list = [np.array(Image.open(path)) for path in image_list]
 
 
 ## data augmentation
@@ -75,9 +69,71 @@ def randomShiftScaleRotate(image_A, mask,
     return image_A, mask
 
 
+def gauss_blur(img, ksize=(3, 3), sigma=0):
+    '''
+    高斯模糊
+    :param img: 原始图片
+    :param ksize: 高斯内核大小。 ksize.width和ksize.height可以不同，但​​它们都必须为正数和奇数，也可以为零
+    :param sigma: 标准差，如果写0，则函数会自行计算
+    :return:
+    '''
+    # 外部调用传入正整数即可,在这里转成奇数
+    k_list = list(ksize)
+    kw = (k_list[0] * 2) + 1
+    kh = (k_list[1] * 2) + 1
+    resultImg = cv2.GaussianBlur(img, (kw, kh), sigma)
+    return resultImg
+
+
+def blur(img, ksize=(5, 5)):
+    '''
+    均值模糊
+    :param img: 原始图片
+    :param ksize: 模糊内核大小
+    :return:
+    '''
+    resultImg = cv2.blur(img, ksize)
+    return resultImg
+
+
+def median_blur(img, m=3):
+    '''
+    中值模糊
+    :param img: 原始图片
+    :param m: 孔径的尺寸，一个大于1的奇数
+    :return:
+    '''
+    resultImg = cv2.medianBlur(img, m)
+    return resultImg
+
+
+def random_blur(image, mask, ratio=0.5):
+    if np.random.random() < ratio / 3:
+        image = gauss_blur(image)
+    if np.random.random() < ratio / 3:
+        image = median_blur(image)
+    if np.random.random() < ratio / 3:
+        image = blur(image)
+    return image, mask
+
+
+def random_crop(image, mask, ratio=0.5):
+    if np.random.random() < ratio:
+        (h, w) = image.shape[:2]
+        scale = np.random.uniform(1.01, 1.2)
+        image = cv2.resize(image, (int(scale * h), int(scale * w)))
+        mask = cv2.resize(mask, (int(scale * h), int(scale * w)), interpolation=cv2.INTER_NEAREST)
+        (nh, nw) = image.shape[:2]
+        startx = np.random.randint(0, nh - h)
+        starty = np.random.randint(0, nw - w)
+        return image[startx:startx + h, starty:starty + w], mask[startx:startx + h,
+                                                            starty:starty + w]
+    return image, mask
+
+
 def rotate_bound(image, mask, ratio=0.5):
     if np.random.random() < ratio:
-        angle = np.random.randint(-15, 15)
+        angle = np.random.randint(-45, 45)
         # grab the dimensions of the image and then determine the
         # center
         (h, w) = image.shape[:2]
@@ -101,11 +157,11 @@ def rotate_bound(image, mask, ratio=0.5):
     return image, mask
 
 
-def randomStyleTransfer(image_A, ratio):
-    if np.random.random() < ratio:
-        image = np.random.choice(image_list)
-        image_A = style_transfer(image_A, image)
-    return image_A
+# def randomStyleTransfer(image_A, ratio):
+#     if np.random.random() < ratio:
+#         image = np.random.choice(image_list)
+#         image_A = style_transfer(image_A, image)
+#     return image_A
 
 
 def randomHorizontalFlip(image_A, mask, ratio=0.5):
@@ -144,7 +200,11 @@ def data_agu_ss(image_A, label, ratio=0.5):
 
     image_A = randomHueSaturationValue(image_A, ratio=ratio)
 
-    image_A = randomStyleTransfer(image_A, ratio=ratio)
+    # image_A = randomStyleTransfer(image_A, ratio=ratio)
+
+    image_A, label = random_crop(image_A, label, ratio)
+
+    image_A, label = random_blur(image_A, label, ratio)
 
     image_A, label = randomHorizontalFlip(image_A, label, ratio)
 
@@ -158,8 +218,12 @@ def data_agu_ss(image_A, label, ratio=0.5):
 
 
 if __name__ == "__main__":
-    tif = Image.open("../real_data/test.tif")
+    tif = Image.open("../real_data/processed_data/2020_2_1_res_0.8.tif")
     tif = np.array(tif)
-    tif = rotate_bound(tif, 15)
-    # plt.imshow(tif)
-    # plt.show()
+    mask = Image.open("../real_data/semantic_mask/2020_2_1_res_0.8.tif")
+    mask = np.array(mask)
+    tif, mask = rotate_bound(tif, mask, 15)
+    fg, ax = plt.subplots(1, 2, figsize=(10, 5))
+    ax[0].imshow(tif)
+    ax[1].imshow(mask)
+    plt.show()

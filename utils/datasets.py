@@ -1,3 +1,4 @@
+# encoding:utf-8
 import os
 import numpy as np
 import torch
@@ -38,20 +39,21 @@ class SSDataRandomCrop(Dataset):
             return self.image_list[index], self.normalize(self.image_list[index])
         else:
             select_index = np.random.randint(len(self.image_list))
-            image = self.image_list[select_index].copy()
-            mask = self.mask_list[select_index].copy()
+            image = self.image_list[select_index]
+            mask = self.mask_list[select_index]
+
             image_shape = image.shape
             size = self.img_size
             if self.mode == "train":
                 x_rd = int(
-                    np.random.random() * (int(image_shape[0] * self.train_test_split) - size))
+                        np.random.random() * (int(image_shape[0] * self.train_test_split) - size))
                 y_rd = int(np.random.random() * (image_shape[1] - size))
                 image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
                 mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
                 image, mask = data_agu_ss(image, mask)
             elif self.mode == "val":
                 x_rd = int(np.random.random() * (
-                            int(image_shape[0] * (1 - self.train_test_split)) - size)) + int(
+                        int(image_shape[0] * (1 - self.train_test_split)) - size)) + int(
                         image_shape[0] * self.train_test_split)
                 y_rd = int(np.random.random() * (image_shape[1] - size))
                 image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
@@ -67,6 +69,8 @@ class SSDataRandomCrop(Dataset):
 
 # data
 class SSData(Dataset):
+    """提供图像路径作为数据集"""
+
     def __init__(self, root, mode, use_pseudo_label=False):
         super(SSData, self).__init__()
         self.root = root

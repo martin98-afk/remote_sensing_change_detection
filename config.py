@@ -1,7 +1,9 @@
+# encoding:utf-8
 import os
 from numpy import random
 import torch
 import numpy as np
+# import cupy as cp
 import warnings
 import matplotlib.pyplot as plt
 
@@ -28,7 +30,7 @@ seed_it(1)
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 plt.rc('xtick', labelsize=10)
-plt.rc('ytick', labelsize=20)
+plt.rc('ytick', labelsize=10)
 
 font1 = {'family': 'SimHei',
          'weight': 'normal',

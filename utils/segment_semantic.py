@@ -1,13 +1,16 @@
 from glob import glob
+import collections
 
 from PIL import Image
 from osgeo import gdal
+from skimage.segmentation import mark_boundaries, slic
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import *
 from utils.crf import DenseCRF
 from utils.datasets import SSDataRandomCrop
+from utils.detect_change_to_block import ARR2TIF
 from utils.gdal_utils import write_img
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import raster2vector
@@ -31,8 +34,32 @@ post_processor = DenseCRF(
 )
 
 
-def predict(model, image, ori_image, num_classes, device, threashold=0.2):
-    image = image.to(device).half()
+def slic_segment(image, num_segments=700, mask=None, visualize=True):
+    """
+    使用slic算法对图像进行超像素划分。
+
+    :param image:
+    :param num_segments:
+    :param visualize:
+    :return:
+    """
+    segments = slic(image, n_segments=num_segments,
+                    sigma=5, mask=mask)
+    if visualize:
+        # show the output of SLIC
+        fig = plt.figure("Superpixels -- %d segments" % (num_segments))
+        ax = fig.add_subplot(1, 1, 1)
+        ax.imshow(mark_boundaries(image, segments, color=(255, 0, 0)))
+        plt.axis("off")
+
+        # show the plots
+        plt.show()
+    return segments
+
+
+def predict(model, image, ori_image, num_classes, args, threashold=0.2):
+    image = image.to(args.device)
+    image = image.half() if args.half else image
     with torch.no_grad():
         output = torch.nn.Softmax(dim=1)(model(image))
         output = output.detach().cpu().numpy()
@@ -227,32 +254,36 @@ def concat_result(shape, TifArrayShape, npyfile, RepetitiveLength, RowOver, Colu
 
 @torch.no_grad()
 def test_big_image(model, image1_path, IMAGE_SIZE,
-                   num_classes, device, batch_size=24,
-                   cut_length=64):
+                   num_classes, args):
     """
-
+    对大型遥感图像进行切割以后，逐片进行语义分割，最后可以选择是否再进行超像素分割对语义分割结果进行后处理。
 
     :param model:
     :param image1_path:
+    :param IMAGE_SIZE:
+    :param num_classes:
+    :param device:
+    :param batch_size:
     :param cut_length:
+    :param slic:
     :return:
     """
     # 历史图像1
     raw_image = Image.open(image1_path)
     raw_image = np.asarray(raw_image)[:, :, :3]
     RSPipeline.print_log("开始分割原始大遥感影像")
-    TifArray, RowOver, ColumnOver = TifCroppingArray(raw_image, cut_length, IMAGE_SIZE)
+    TifArray, RowOver, ColumnOver = TifCroppingArray(raw_image, 64, IMAGE_SIZE)
     TifArray = np.array(TifArray)
     TifArray_shape = TifArray.shape
     TifArray = TifArray.reshape((-1, TifArray.shape[2], TifArray.shape[3], TifArray.shape[4]))
     print("遥感图像分割后大小", TifArray.shape)
     RSPipeline.print_log("根据划分图像构造数据集")
     predicts = None
-    test_loader = get_dataloader(TifArray, batch_size=batch_size)
+    test_loader = get_dataloader(TifArray, batch_size=args.batch_size)
     RSPipeline.print_log("代入模型获得每小块验证结果")
     for ori_image, image in tqdm(test_loader):
-
-        output = predict(model, image, ori_image, num_classes, device)
+        # TODO 获取当前进度并写入数据库之中
+        output = predict(model, image, ori_image, num_classes, args)
         output = np.uint8(output)
         if predicts is None:
             predicts = output
@@ -262,68 +293,61 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
     RSPipeline.print_log("预测完毕，拼接结果中")
     # 保存结果
     result_shape = (raw_image.shape[0], raw_image.shape[1])
-    result_data = concat_result(result_shape, TifArray_shape, predicts, cut_length, RowOver,
+    result_data = concat_result(result_shape, TifArray_shape, predicts, 64, RowOver,
                                 ColumnOver, IMAGE_SIZE)
+    # TODO 对结果进行slic超像素聚类，使得结果可视化效果更好
+    if args.slic > 0:
+        RSPipeline.print_log("拼接完成，正在使用slic算法对结果进行聚类合并")
+        slic_segments = slic_segment(np.repeat(result_data[..., np.newaxis], repeats=3, axis=-1),
+                                     num_segments=args.slic,
+                                     visualize=False)
+        for i in range(np.max(slic_segments) + 1):
+            pixels = result_data[slic_segments == i]
+            if len(pixels) > 1:
+                # 求同一个超像素下的众数并将该数值付给该超像素整体
+                data = collections.Counter(pixels)
+                data = dict(data)
+                # 获取出现最多次数的标签
+                index = np.argmax(list(data.values()))
+                # 获取众数
+                value = list(data.keys())[index]
+                result_data[slic_segments == i] = value
+        RSPipeline.print_log("合并完成")
+
     return result_data
 
 
 def test_semantic_segment_files(model,
                                 ind2label,
-                                file_path,
                                 img_size,
                                 num_classes,
-                                device):
+                                args):
     """
+    对多个遥感图像文件进行语义分割
 
-
-    :param model:
-    :param file_path:
+    :param model: 用来语义分割的模型。
+    :param ind2label: 数字标号转中文标号的字典。
+    :param img_size: 图像大小。
+    :param num_classes: 总类别数（包含背景类 0）
+    :param args: 参数集合
     :return:
     """
-    image_2020_list = [RSPipeline.check_path(path) for path in glob(file_path)]
-    file_list = [path[:-4].split('/')[-1] for path in image_2020_list]
-    for i, image_2020 in enumerate(image_2020_list):
-        semantic_result = test_big_image(model, image_2020, img_size, num_classes, device,
-                                         batch_size=12)
+    output_dir = args.output_dir   # 输出文件夹
+    file_path = args.target_dir + "/" + args.file_path  # 使用的文件路径
+    assert args.device == 'cpu' or 'cuda' in args.device, '所使用的机器类型必须为cpu或者cuda'
+    image_list = [RSPipeline.check_path(path) for path in glob(file_path)] \
+        if "*" in file_path else [file_path]
+    file_list = [path[:-4].split('/')[-1] for path in image_list]
+    for i, image in enumerate(image_list):
+        semantic_result = test_big_image(model, image,
+                                         img_size, num_classes,
+                                         args)
         RSPipeline.print_log("语义分割已完成")
-        image = gdal.Open(image_2020)
+        image = gdal.Open(image)
 
-        tif_path = f"./output/semantic_result/tif/{file_list[i]}_semantic_result.tif"
-        shp_path = f"./output/semantic_result/shp/{file_list[i]}_semantic_result.shp"
-
-        write_img(tif_path,
-                  image.GetProjection(),
-                  image.GetGeoTransform(),
-                  semantic_result.reshape((1, semantic_result.shape[0], semantic_result.shape[1])))
+        tif_path = f"{output_dir}/tif/{file_list[i]}_semantic_result.tif"
+        shp_path = f"{output_dir}/shp/{file_list[i]}_semantic_result.shp"
+        ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
         RSPipeline.print_log("分割结果栅格数据保存已完成")
-        raster2vector(raster_path=tif_path, vector_path=shp_path, label=ind2label)
+        raster2vector(tif_path, vector_path=shp_path, label=ind2label, remove_tif=args.save_tif)
         RSPipeline.print_log("分割结果矢量数据保存已完成")
-
-
-def test_semantic_single_file(model,
-                              ind2label,
-                              file_path,
-                              img_size,
-                              num_classes,
-                              device):
-    """
-
-
-    :param model:
-    :param file_path:
-    :return:
-    """
-    semantic_result = test_big_image(model, file_path,
-                                     img_size, num_classes,
-                                     device, batch_size=12)
-    RSPipeline.print_log("语义分割已完成")
-    tif_path = f"./output/semantic_result/tif/{file_path.split('/')[-1][:-4]}_semantic_result.tif"
-    shp_path = f"./output/semantic_result/shp/{file_path.split('/')[-1][:-4]}_semantic_result.shp"
-    image = gdal.Open(file_path)
-    write_img(tif_path,
-              image.GetProjection(),
-              image.GetGeoTransform(),
-              semantic_result.reshape((1, semantic_result.shape[0], semantic_result.shape[1])))
-    RSPipeline.print_log("分割结果栅格数据保存已完成")
-    raster2vector(raster_path=tif_path, vector_path=shp_path, label=ind2label)
-    RSPipeline.print_log("分割结果矢量数据保存已完成")

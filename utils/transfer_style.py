@@ -35,3 +35,7 @@ def style_transfer(source_image, target_image):
 
     out = out.astype(np.uint8)
     return out
+
+
+if __name__ == "__main__":
+    ...

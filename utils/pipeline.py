@@ -1,3 +1,4 @@
+# encoding:utf-8
 import gc
 import os.path
 from glob import glob
@@ -32,17 +33,7 @@ class RSPipeline(object):
                  args):
         """
         初始化遥感识别系统管道流程。
-
-        :param batch_size: 批量大小
         :param num_classes: 分类类别数
-        :param epochs: 训练轮数
-        :param image_size: default 512
-        :param model_name: default efficientnet-b0
-        :param model_name: 使用的模型类型
-        :param num_workers: 数据读取使用的线程数
-        :param ohem: 是否启用在线难例挖掘损失函数
-        :param fp_16: 是否使用半精度训练
-        :param device: default cpu
         """
         self.batch_size = args.batch_size
         self.ind2label = ind2label
@@ -100,24 +91,21 @@ class RSPipeline(object):
         :return:
         """
         mask_paths = glob(self.label_path)
+        print(mask_paths)
         mask_paths = [RSPipeline.check_path(path) for path in mask_paths]
         image_paths = [path.replace("semantic_mask", "processed_data")
                        for path in mask_paths]
-        # 图片读取
-        image_list = [Image.open(image_path) for image_path in image_paths]
-        mask_list = [Image.open(mask_path) for mask_path in mask_paths]
-
-        image_list = [np.asarray(image)[..., :3] for image in image_list]
-        mask_list = [np.asarray(mask) for mask in mask_list]
+        image = [np.array(Image.open(path))[..., :3] for path in image_paths]
+        mask = [np.array(Image.open(path)) for path in mask_paths]
         # 数据集构建
-        trainset = SSDataRandomCrop(image_list, mask_list, mode="train",
+        trainset = SSDataRandomCrop(image, mask, mode="train",
                                     img_size=self.image_size, length=self.train_size)
-        valset = SSDataRandomCrop(image_list, mask_list, mode="val",
+        valset = SSDataRandomCrop(image, mask, mode="val",
                                   img_size=self.image_size, length=self.val_size)
         trainloader = DataLoader(trainset, batch_size=self.batch_size, shuffle=True,
                                  pin_memory=False, num_workers=self.num_workers, drop_last=True)
         valloader = DataLoader(valset, batch_size=self.batch_size, shuffle=False,
-                               pin_memory=True, num_workers=self.num_workers, drop_last=False)
+                               pin_memory=False, num_workers=self.num_workers, drop_last=False)
 
         for img1, mask_bin, id in trainloader:
             print('训练数据形状: ', img1.shape)
@@ -316,6 +304,7 @@ class RSPipeline(object):
         """
         根据提供的yaml文件路径，解析模型参数，并导入模型。
 
+        :param device:
         :param model_info_path:
         :return:
         """
@@ -386,16 +375,6 @@ class RSPipeline(object):
                 target_tif_path=save_path,
                 attribute_field=columns[0],
                 nodata_value=0)
-        # image = gdal.Open(image_path)
-        # image_shape = image.ReadAsArray().shape
-        # # 初始化标签
-        # mask = num_classes * np.ones((image_shape[1], image_shape[2]))
-        # # 根据对应的shp文件将标签进行填充
-        # mask = get_mask(image, mask, shp_path, ind2num)
-        # # 将标签转为Image形式，方便保存
-        # mask = Image.fromarray(mask.astype(np.uint8))
-        # RSPipeline.check_file(save_path)
-        # mask.save(save_path)
         RSPipeline.print_log("更新结果完毕，数据已保存")
 
     @staticmethod

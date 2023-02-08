@@ -26,7 +26,7 @@ def load_tif(filepath, block_size):
 
 def distribute_count(array):
     list = []
-    for i in range(np.max(array) + 1):
+    for i in range(int(np.max(array)) + 1):
         list.append(np.sum(array == i))
     if len(list) > 1:
         return np.argmax(list[1:])
@@ -108,7 +108,7 @@ def change_detect(num_w, num_h, rm_w, rm_h, data, s, block_size):
     return all_out_array
 
 
-def ARR2TIF(data, origin_dataset, origin_proj, out_filepath):
+def ARR2TIF(data, origin_transform, origin_proj, out_filepath):
     """
     整个图像的mask_array转为一张新的tif
 
@@ -128,8 +128,7 @@ def ARR2TIF(data, origin_dataset, origin_proj, out_filepath):
     # 获取投影信息
     new_dataset.SetProjection(origin_proj)
     # 仿射矩阵
-    origin_geotrans = origin_dataset.GetGeoTransform()
-    new_dataset.SetGeoTransform(origin_geotrans)
+    new_dataset.SetGeoTransform(origin_transform)
     band = new_dataset.GetRasterBand(1)
     band.WriteArray(data)
 
@@ -148,4 +147,4 @@ if __name__ == "__main__":
         change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(in_file, block_size=block_size)
         arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, s, block_size=block_size)
         ARR2TIF(arrayout, change_data, origin_proj, out_tif)
-        raster2vector(raster_path=out_tif, vector_path=out_shp)
+        raster2vector(arrayout, origin_proj, vector_path=out_shp)

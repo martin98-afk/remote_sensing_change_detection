@@ -30,9 +30,10 @@ class ModelMeasurement(object):
         result_arr = self.concat_result(real_array, pred_array)
         conf_mat = self.cal_confusion_matrix(real_array, pred_array)
         iou = self.IntersectionOverUnion(conf_mat)
-        iou[-1] = iou[-2]
-        iou[-2] = 0
+        iou = list(iou)
+        iou = iou[:-1] + [0] + iou[-1:]
         iou = np.array(iou).reshape((-1, 1))
+        print(result_arr, iou)
         result_arr = np.hstack([result_arr, iou])
         miou = self.MeanIntersectionOverUnion(conf_mat)
         fwiou = self.Frequency_Weighted_Intersection_over_Union(conf_mat)

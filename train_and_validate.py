@@ -1,3 +1,4 @@
+# encoding:utf-8
 import argparse
 import sys
 from glob import glob
@@ -26,7 +27,7 @@ def get_parser():
                         help="标签存储路径")
     parser.add_argument("--update-polygon", type=bool, default=True,
                         help="是否更新训练标签")
-    parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0_new.pth",
+    parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
     parser.add_argument("--pop-head", type=bool, default=True,
                         help="是否需要將模型的分類頭刪除")
@@ -37,9 +38,9 @@ def get_parser():
                         help="是否使用半精度训练，默认为True")
     parser.add_argument("--model-name", type=str, default="efficientnet-b0",
                         help="训练使用的骨干网络模型名称")
-    parser.add_argument("--batch-size", type=int, default=16,
+    parser.add_argument("--batch-size", type=int, default=12,
                         help="训练一批的图片数量")
-    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0_new.pth",
+    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
     parser.add_argument("--ohem", type=bool, default=True,
                         help="是否使用在线难例挖掘")
@@ -117,22 +118,19 @@ if __name__ == '__main__':
         print('输出输入到日志中!')
 
     # 更新标签数据
-    if args.update_polygon:
-        image_path = "real_data/processed_data/farmland1.tif"
-        RSPipeline.update_polygon(args, image_path=image_path,
-                                  shp_path="real_data/farmland/farmland1_simplize.shp",
-                                  num_classes=num_classes,
-                                  ind2num=ind2num)
-        # image_paths = glob("real_data/processed_data/2020_2_1_res_*.tif")
-        # image_paths.extend(
-        #         glob("real_data/processed_data/2020_2_2_res_*.tif")
-        # )
-        # for path in image_paths:
-        #     RSPipeline.update_polygon(args, image_path=path,
-        #                               shp_path="real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2_merged_ma/"
-        #                                        "LCRA_2020_2_merged.shp",
-        #                               num_classes=num_classes,
-        #                               ind2num=ind2num)
+    # if args.update_polygon:
+    #     image_paths = glob("real_data/processed_data/2020_1_3_res_*.tif")
+    #     for path in image_paths:
+    #         RSPipeline.update_polygon(args, image_path=path,
+    #                                   shp_path="real_data/修正shp/2020_1_3.shp",
+    #                                   num_classes=num_classes,
+    #                                   ind2num=ind2num)
+    #     image_paths = glob("real_data/processed_data/2021_1_3_res_0.5.tif")
+    #     for path in image_paths:
+    #         RSPipeline.update_polygon(args, image_path=path,
+    #                                   shp_path="real_data/修正shp/2021_1_3_res_0.5_semantic_result.shp",
+    #                                   num_classes=num_classes,
+    #                                   ind2num=ind2num)
         # image_paths = glob("real_data/processed_data/2020_2_3_res_*.tif")
         # image_paths.extend(
         #     glob("real_data/processed_data/2020_2_4_res_*.tif")

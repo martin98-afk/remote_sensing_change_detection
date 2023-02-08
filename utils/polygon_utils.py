@@ -1,20 +1,48 @@
-from glob import glob
-
 import cv2
 import geopandas
-import numpy as np
-import matplotlib.pyplot as plt
 from PIL import Image
 from osgeo import osr, gdal, ogr
 
 from config import *
 
-# def add_label(vector_path)
-from utils.gdal_utils import write_img
+
+def transform_geoinfo(source_image, target_image, save_path=None):
+    """
+    统一投影系统。
+
+    :param save_path:
+    :param target_image: 要转入投影系统的目标图像，可以为路径。
+    :param source_image: 待转换投影系统的目标图像，可以为路径。
+    :return:
+    """
+    if type(source_image) == str:
+        source_image = gdal.Open(source_image)
+    if type(target_image) == str:
+        target_image = gdal.Open(target_image)
+    if save_path is not None:
+        gdal.Warp(save_path, source_image, format="GTiff", dstSRS=target_image.GetProjection())
+    else:
+        new_image = gdal.Warp("", source_image, format="MEM", dstSRS=target_image.GetProjection())
+        return new_image
+
+
+def cut_raster(raster_path, vector_path,
+               refer_path="../real_data/processed_data/2020_1_1_res_0.5.tif"):
+    """
+    统一投影系统。
+
+    :param vector_path:
+    :param raster_path:
+    :param refer_path:
+    :return:
+    """
+    image_new = transform_geoinfo(raster_path, refer_path)
+    return gdal.Warp("", image_new, cutlineDSName=vector_path,
+                     format="MEM", cropToCutline=False, copyMetadata=True, dstNodata=0)
 
 
 def raster2vector(raster_path, vector_path, label=None,
-                  field_name='class', ignore_vales=None):
+                  field_name='class', ignore_vales=None, remove_tif=True):
     """
     该代码文件包括所有任务检测结果的保存，主要为遥感图像分类结果栅格数据转换为矢量数据，并保存结果
     遥感图像像素级别分类（语义分割）结果是栅格图像，转成矢量shp更方便在arcgis中自定义展示，
@@ -27,6 +55,8 @@ def raster2vector(raster_path, vector_path, label=None,
     :return:
     """
     raster = gdal.Open(raster_path)
+    target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
+    raster = transform_geoinfo(raster, target_image)
     band = raster.GetRasterBand(1)
     # 读取栅格的投影信息， 为后面生成的矢量赋予相同的投影信息
     prj = osr.SpatialReference()
@@ -57,7 +87,7 @@ def raster2vector(raster_path, vector_path, label=None,
                     break
     polygon.SyncToDisk()
     polygon = None
-
+    # 将数字标签转为中文标签
     if label is not None:
         shp_file = read_shp(vector_path, encoding='gbk')
         label = ["其他"] + list(label.values())
@@ -66,6 +96,9 @@ def raster2vector(raster_path, vector_path, label=None,
             out_label.append(label[int(shp_file['class'].iloc[i])])
         shp_file.insert(shp_file.shape[1], 'label', out_label)
         shp_file.to_file(vector_path, encoding='gb18030')
+
+    if remove_tif:
+        os.remove(raster_path)
 
 
 def get_tif_meta(tif_path):
@@ -282,7 +315,95 @@ def get_mask(image, mask, shp_path, ind2num):
     return mask
 
 
+def reproject(inputfile, outputfile, layername, insrs, outsrs):
+    gdal.SetConfigOption("GDAL_FILENAME_IS_UTF8", "NO")
+    gdal.SetConfigOption("SHAPE_ENCODING", "")
+    driver = ogr.GetDriverByName('ESRI Shapefile')
+
+    # create the CoordinateTransformation
+    coordTrans = osr.CoordinateTransformation(insrs, outsrs)
+
+    # get the input layer
+    inDataSet = driver.Open(inputfile)
+    inLayer = inDataSet.GetLayer()
+
+    # create the output layer
+    outputShapefile = outputfile
+    outDataSet = driver.CreateDataSource(outputShapefile)
+    print(inLayer.GetGeomType())
+    outLayer = outDataSet.CreateLayer(layername, geom_type=inLayer.GetGeomType())
+
+    # add fields
+    inLayerDefn = inLayer.GetLayerDefn()
+    for i in range(0, inLayerDefn.GetFieldCount()):
+        fieldDefn = inLayerDefn.GetFieldDefn(i)
+        outLayer.CreateField(fieldDefn)
+
+    # get the output layer's feature definition
+    outLayerDefn = outLayer.GetLayerDefn()
+
+    # loop through the input features
+    inFeature = inLayer.GetNextFeature()
+    while inFeature:
+        # get the input geometry
+        geom = inFeature.GetGeometryRef()
+        # reproject the geometry
+        geom.Transform(coordTrans)
+        # create a new feature
+        outFeature = ogr.Feature(outLayerDefn)
+        # set the geometry and attribute
+        outFeature.SetGeometry(geom)
+        for i in range(0, outLayerDefn.GetFieldCount()):
+            outFeature.SetField(outLayerDefn.GetFieldDefn(i).GetNameRef(), inFeature.GetField(i))
+        # add the feature to the shapefile
+        outLayer.CreateFeature(outFeature)
+        # destroy the features and get the next input feature
+        outFeature.Destroy()
+        inFeature.Destroy()
+        inFeature = inLayer.GetNextFeature()
+
+    # close the shapefiles
+    inDataSet.Destroy()
+    outDataSet.Destroy()
+
+
+def joint_polygon(target_shp_file, con_shp_file):
+    """
+    计算2个不同shp文件中多边形的交集，同时计算相交面积，然后保留相交面积大于一定阈值的目标矢量文件中的多边形。
+
+    :param target_shp_file: 目标矢量文件，
+    :param con_shp_file: 识别出的变化区域矢量文件。
+    :return:
+4    """
+    target = read_shp(target_shp_file)
+    detect = read_shp(con_shp_file)
+    detect_list = [3, 4, 5, 8]
+    save_path = con_shp_file.replace(".shp", "_spot.shp")
+    save_shp = None
+    for ind in detect_list:
+        detect_ind = detect[detect['class'] == ind]
+        pop_list = []
+        for i in range(len(detect_ind)):
+            for j in range(len(target)):
+                if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area / target.iloc[
+                    j, 1].area > 0.1:
+                    pop_list.append(j)
+        pop_list = set(pop_list)
+        if save_shp is None:
+            select = target.iloc[list(pop_list), :]
+            select["class"] = [ind] * len(pop_list)
+            save_shp = select
+        else:
+            select = target.iloc[list(pop_list), :]
+            select["class"] = [ind] * len(pop_list)
+            save_shp = save_shp.append(select)
+    save_shp.to_file(save_path)
+
+
 if __name__ == "__main__":
+    image = cut_raster("../real_data/test8.tif",
+                       "../real_data/移交数据和文档/rice/rice.shp")
+
     # # 从大类标注文件中提取耕地图斑
     # shp_file = read_shp("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_major_class.shp")
     # shp_file = shp_file[shp_file.iloc[:, 0] == 1]
@@ -313,18 +434,18 @@ if __name__ == "__main__":
     #               image.GetGeoTransform(),
     #               np.transpose(image_array, (2, 0, 1)))
 
-    # TODO 测试将变化检测出的小方块映射到耕地图斑之上
-    shp_file = read_shp("../output/semantic_result/change_result/detect_change_block_1_4.shp")
-    tif = shp2tif(shp_path="../output/semantic_result/change_result/detect_change_block_1_4.shp",
-                  refer_tif_path="../real_data/processed_data/2020_1_4_res_0.5.tif",
-                  target_tif_path="../output/semantic_result/tif/detect_change_block_1_4.tif",
-                  attribute_field="class",
-                  nodata_value=0,
-                  return_tif=True)
-    tif_array = tif.ReadAsArray()
-
-    mask = Image.open("../real_data/semantic_mask/2020_1_4_res_0.5_farmland.tif")
-    mask = np.array(mask)
-    tif_array[mask == 0] = 0
-    plt.imshow(tif_array)
-    plt.show()
+    # # TODO 测试将变化检测出的小方块映射到耕地图斑之上
+    # shp_file = read_shp("../output/semantic_result/change_result/detect_change_block_1_4.shp")
+    # tif = shp2tif(shp_path="../output/semantic_result/change_result/detect_change_block_1_4.shp",
+    #               refer_tif_path="../real_data/processed_data/2020_1_4_res_0.5.tif",
+    #               target_tif_path="../output/semantic_result/tif/detect_change_block_1_4.tif",
+    #               attribute_field="class",
+    #               nodata_value=0,
+    #               return_tif=True)
+    # tif_array = tif.ReadAsArray()
+    #
+    # mask = Image.open("../real_data/semantic_mask/2020_1_4_res_0.5_farmland.tif")
+    # mask = np.array(mask)
+    # tif_array[mask == 0] = 0
+    # plt.imshow(tif_array)
+    # plt.show()
