@@ -28,7 +28,7 @@ def extract_target(class_id, name, res,
     if len(class_id) > 1:
         for i in class_id[1:]:
             shp_file = shp_file.append(shp_file_ori[shp_file_ori.iloc[:, 0] == i])
-    shp_file.to_file(shp_path.replace("major_calss.shp",f"{name}.shp"))
+    shp_file.to_file(shp_path.replace("major_calss.shp", f"{name}.shp"))
     refer_image_path = glob(f"real_data/processed_data/2021_1_*_res_{res}.tif")
     save_path = [path.replace("processed_data", "trad_alg")
                      .replace(".tif", f"_{name}_mask.tif") for path in refer_image_path]

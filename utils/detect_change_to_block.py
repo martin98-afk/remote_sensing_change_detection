@@ -1,3 +1,4 @@
+import gc
 from glob import glob
 
 from osgeo import gdal
@@ -131,6 +132,7 @@ def ARR2TIF(data, origin_transform, origin_proj, out_filepath):
     new_dataset.SetGeoTransform(origin_transform)
     band = new_dataset.GetRasterBand(1)
     band.WriteArray(data)
+    gc.collect()
 
 
 if __name__ == "__main__":

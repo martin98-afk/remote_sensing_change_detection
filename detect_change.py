@@ -1,6 +1,5 @@
 # encoding:utf-8
 import argparse
-import gc
 import sys
 
 from utils.detect_change_to_block import *
@@ -15,11 +14,11 @@ def get_parser():
     :return:
     '''
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-info-path', type=str, default='./output/ss_eff_b0.yaml',
+    parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0.yaml',
                         help='需要使用的模型信息文件存储路径')
-    parser.add_argument('--target-dir', type=str, default='real_data/',
+    parser.add_argument('--target-dir', type=str, default='real_data/processed_data',
                         help='需要进行预测的图像存储路径')
-    parser.add_argument('--file-path', type=str, default='test7.tif',
+    parser.add_argument('--file-path', type=str, default='2020_1_*_res_0.5.tif',
                         help='确认训练模型使用的机器')
     parser.add_argument('--output-dir', type=str, default='output/semantic_result',
                         help='输出结果存储路径')
@@ -33,7 +32,7 @@ def get_parser():
                         help='是否对分割结果进行slic聚类算法后处理, 设置为0则不使用slic算法')
     parser.add_argument('--batch-size', type=int, default=6,
                         help='进行验证时使用的批量大小')
-    parser.add_argument('--device', type=str, default='cuda:1', help='确认训练模型使用的机器')
+    parser.add_argument('--device', type=str, default='cuda', help='确认训练模型使用的机器')
     parser.add_argument('--log-output', action='store_true', help='在控制台打印程序运行结果')
     parser.add_argument('--change-threshold', type=float, default=0.35,
                         help='最后网格化判断网格是否变化的阈值，1即如果网格中像素比例超过该阈值则判定该网格为变化区域。')
@@ -43,7 +42,7 @@ def get_parser():
     return opt
 
 
-def detect_change(image0, image1, include_class=[1], identify_classes=[3, 4, 5, 6, 7, 8]):
+def detect_change(image0, image1, include_class=[1], identify_classes=[2, 3, 4, 5, 8]):
     '''
     指定要检测的标签，检测image 1相比image 0中农田区域变化成指定标签地形的区域。
 
@@ -64,9 +63,73 @@ def detect_change(image0, image1, include_class=[1], identify_classes=[3, 4, 5, 
     return change_result
 
 
+def change_polygon_detect(model, target_image, IMAGE_SIZE, num_classes, args):
+    """
+    进行变化识别，识别结果同时进行网格化处理。
+
+    :param model: 进行语义分割的模型。
+    :param target_image: 变化识别目标图像路径。
+    :param IMAGE_SIZE: 图像大小
+    :param num_classes: 识别地貌类型种类
+    :param args: 所有系统参数。
+    :return:
+    """
+    RSPipeline.print_log('正在执行依据图斑变化检测模块')
+    image = gdal.Open(target_image)
+    semantic_result = test_big_image(model, target_image,
+                                     IMAGE_SIZE, num_classes,
+                                     args)
+    ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
+    raster2vector(tif_path, vector_path=shp_path, remove_tif=False)
+    # TODO 根据耕地mask裁剪出对应耕地识别结果。
+    # 将检测出的变化区域转换为原始三调图斑，如果三调图斑中一个图斑中有0.1部分的面积被覆盖到，就算这个图斑为变化区域，并存储最终结果。
+    joint_polygon('real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp',
+                  shp_path)
+
+
+def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes, args):
+    """
+    进行变化识别，识别结果同时进行网格化处理。
+
+    :param model: 进行语义分割的模型。
+    :param src_image: 源图像存储路径
+    :param target_image: 变化识别目标图像路径。
+    :param IMAGE_SIZE: 图像大小
+    :param num_classes: 识别地貌类型种类
+    :param args: 所有系统参数。
+    :return:
+    """
+    RSPipeline.print_log('正在执行依据图像变化检测模块')
+    # 输入两年份的图片
+    # 进行变化识别
+    tif_path = 'output/semantic_result/tif/detect_change.tif'
+    shp_path = 'output/semantic_result/change_result/detect_change_block.shp'
+    tif_block_path = 'output/semantic_result/tif/detect_change_block.tif'
+    semantic_result_src = test_big_image(model, src_image,
+                                         IMAGE_SIZE, num_classes,
+                                         args, denominator=2, addon=0)
+    semantic_result_target = test_big_image(model, target_image,
+                                            IMAGE_SIZE, num_classes,
+                                            args, denominator=2, addon=50)
+    RSPipeline.print_log('两年份遥感数据语义分割已完成')
+    image = gdal.Open(src_image)
+    change_result = detect_change(semantic_result_src, semantic_result_target)
+    ARR2TIF(change_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
+    RSPipeline.print_log('变化识别完成已保存结果')
+
+    # 将变化区域转变为50*50的方块，以方便使用和统计准确率
+    RSPipeline.print_log('开始将变化识别结果网格化')
+    threshold = args['change_threshold']  # 判定阈值
+    block_size = args['block_size']
+
+    change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(tif_path, block_size)
+    arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, threshold, block_size)
+    ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, tif_block_path)
+    raster2vector(tif_block_path, vector_path=shp_path)
+
+
 if __name__ == '__main__':
     args = get_parser()
-
     # 判断是否要将输出打印到控制台
     if args.log_output:
         f_handler = open('./out_detect_change.log', 'w', encoding='utf-8')
@@ -166,21 +229,5 @@ if __name__ == '__main__':
             ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, out_tif)
             raster2vector(out_tif, vector_path=out_shp)
 
-        # # TODO 使用三调数据作为基础,筛选语义分割的结果，只保留耕地图斑的区域。
-        # for i, image_2020 in enumerate(image_2020_list):
-        #     place, part = image_2020.split('_')[-4], image_2020.split('_')[-3]
-        #     mask_path = f'real_data/trad_alg/2021_{place}_{part}_res_0.5_耕地_mask.tif'
-        #     tif_path = args.output_dir + f'/tif/detect_change_{place}_{part}.tif'
-        #     shp_path = args.output_dir + f'/change_result/detect_change_{place}_{part}.shp'
-        #     mask = Image.open(mask_path)
-        #     mask = np.array(mask)
-        #     image = gdal.Open(tif_path)
-        #     band = image.GetRasterBand(1).ReadAsArray()
-        #     band[mask == 0] = 0
-        #     ARR2TIF(band, image.GetGeoTransform(), image.GetProjection(), tif_path)
-        #     raster2vector(tif_path, vector_path=shp_path)
-        # 将检测出的变化区域转换为原始三调图斑，如果三调图斑中一个图斑中有0.1部分的面积被覆盖到，就算这个图斑为变化区域，并存储最终结果。
-        # joint_polygon('real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp',
-        #               'output/semantic_result/change_result/detect_change_1_2.shp')
     del model
     gc.collect()

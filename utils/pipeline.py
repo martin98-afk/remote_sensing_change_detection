@@ -9,14 +9,13 @@ import torch
 import torch.nn as nn
 import yaml
 from PIL import Image
-from segmentation_models_pytorch.losses import DiceLoss
 from sklearn.metrics import accuracy_score, f1_score
-from torch.optim.swa_utils import AveragedModel
 from torch.utils.data import DataLoader
 from torchinfo import summary
 from tqdm import tqdm
 
 from models import lovasz_losses as L
+from models.swin_unet import SwinTransformerSys
 from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
 from utils.datasets import SSDataRandomCrop
@@ -39,7 +38,7 @@ class RSPipeline(object):
         self.ind2label = ind2label
         self.num_classes = num_classes
         self.ignore_background = args.ignore_background
-        self.ign_lab = num_classes - 1 if self.ignore_background else None
+        self.ign_lab = 0 if self.ignore_background else None
         self.image_size = args.image_size[0]
         self.device = args.device
         self.model_name = args.model_name
@@ -63,11 +62,27 @@ class RSPipeline(object):
 
         :return:
         """
-        model = get_semantic_segment_model(num_classes=self.num_classes,
-                                           model_name=self.model_name,
-                                           device=self.device,
-                                           pretrained_path=self.pretrained_model_path,
-                                           pop_head=self.pop_head)
+        if "efficientnet" in self.model_name:
+            model = get_semantic_segment_model(num_classes=self.num_classes,
+                                               model_name=self.model_name,
+                                               device=self.device,
+                                               pretrained_path=self.pretrained_model_path,
+                                               pop_head=self.pop_head)
+        else:
+            model = SwinTransformerSys(img_size=512, num_classes=9)
+            model = nn.DataParallel(model)
+            if self.pretrained_model_path is not None and os.path.exists(
+                    self.pretrained_model_path):
+                try:
+                    ckpt = torch.load(self.pretrained_model_path,
+                                      map_location=torch.device(self.device))
+                    model.load_state_dict(
+                            ckpt,
+                            strict=False
+                    )
+                    print('历史最佳模型已读取!')
+                except:
+                    print("参数发生变化，历史模型无效！")
         # 优化器，使用adamw优化器
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
         RSPipeline.print_log("模型创建完毕")
@@ -176,7 +191,12 @@ class RSPipeline(object):
                 scaler.update()
 
             output = np.argmax(output.cpu().data.numpy(), axis=1)
-            acc = f1_score(output.reshape(-1, 1), labels.cpu().data.numpy().reshape(-1, 1),
+            labels = labels.cpu().data.numpy()
+            # 对于需要忽略的标签位置直接置为忽略标签，避免影响准确率
+            if self.ign_lab is not None:
+                output[labels == self.ign_lab] = self.ign_lab
+            acc = f1_score(output.reshape(-1, 1),
+                           labels.reshape(-1, 1),
                            average='macro')
             summary_acc.update(acc.item(), self.batch_size)
             summary_loss.update(losses.item(), self.batch_size)
@@ -199,11 +219,11 @@ class RSPipeline(object):
             tk0 = tqdm(self.val_loader)
             for step, (img1, mask_bin, id) in enumerate(tk0):
                 img1 = img1.float().to(self.device)
-                labels = mask_bin.to(self.device)
+                labels = mask_bin
                 # 输入模型获得预测分割图像
                 output = nn.Softmax(dim=1)(self.model(img1))
                 output = np.argmax(output.cpu().data.numpy(), axis=1)
-                labels = labels.cpu().data.numpy()
+                labels = labels.data.numpy()
                 # 对于需要忽略的标签位置直接置为忽略标签，避免影响准确率
                 if self.ign_lab is not None:
                     output[labels == self.ign_lab] = self.ign_lab
@@ -314,11 +334,26 @@ class RSPipeline(object):
         num_classes = data['num_classes']
         pretrained_path = data['save_path']
         model_name = data['model_name']
-
-        model = get_semantic_segment_model(num_classes=num_classes,
-                                           model_name=model_name,
-                                           device='cpu',
-                                           pretrained_path=pretrained_path)
+        image_size = data['image_size'][0]
+        if "efficientnet" in model_name:
+            model = get_semantic_segment_model(num_classes=num_classes,
+                                               model_name=model_name,
+                                               device="cpu",
+                                               pretrained_path=pretrained_path,
+                                               pop_head=False)
+        else:
+            model = SwinTransformerSys(img_size=image_size, num_classes=num_classes)
+            model = nn.DataParallel(model)
+            if pretrained_path is not None and os.path.exists(pretrained_path):
+                try:
+                    ckpt = torch.load(pretrained_path, map_location=torch.device(device))
+                    model.load_state_dict(
+                            ckpt,
+                            strict=False
+                    )
+                    print('历史最佳模型已读取!')
+                except:
+                    print("参数发生变化，历史模型无效！")
 
         model.to(device)
         model.eval()

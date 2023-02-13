@@ -20,17 +20,18 @@ pip install git+https://github.com/lucasb-eyer/pydensecrf.git
 ```
 
 安装gpu版本pytorch
+
 ```shell
 pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
 ```
 
 安装gdal工具包
+
 ```shell
 conda install gdal
 ```
 
 </details>
-
 
 ## 一、数据准备
 
@@ -61,9 +62,11 @@ python ./ utils/polygon_utils.py
 ![avartar](./output/out_picture/data_augmentation.png)
 
 使用以下命令进行模型训练
+
 ``` shell
 python train_and_validate.py
 ```
+
 以下为该程序可选参数，可以按需进行使用：
 
 ```
@@ -96,8 +99,8 @@ optional arguments:
 
 ```
 
-
 根据训练的模型保存地址会同时生成对应的模型信息，信息包含如下内容：
+
 ```
 OHEM loss: true
 batch_size: 10
@@ -121,12 +124,13 @@ model_name: efficientnet-b1
 num_classes: 9
 save_path: ./output/ss_eff_b1.pth
 ```
+
 模型以及模型信息保存在 ./output 之中。
 
 ## 三、语义分割
 
-提供要进行地貌语义分割的图像文件夹名，程序会自动分割大幅遥感图像为瓦片图，并对每个瓦片图进行识别，在拼接时丢弃每张瓦片图的边缘
-预测不准确的部分，结果栅格数据保存在 ./output/semantic_result/tif 中， 矢量数据保存在 ./output/semantic_result/shp 中。
+提供要进行地貌语义分割的图像文件夹名，程序会自动分割大幅遥感图像为瓦片图，并对每个瓦片图进行识别，在拼接时丢弃每张瓦片图的边缘 预测不准确的部分，结果栅格数据保存在
+./output/semantic_result/tif 中， 矢量数据保存在 ./output/semantic_result/shp 中。
 
 ```shell
 python segment_semantic.py
@@ -137,8 +141,6 @@ python segment_semantic.py
 ![avartar](./output/out_picture/semantic_result.png)
 
 ## 四、模型准确率验证
-
-
 
 ```shell
 python get_model_performance.py
@@ -151,11 +153,13 @@ python get_model_performance.py
 ![avartar](./output/out_picture/acc.png)
 
 同时会在控制台输出iou，miou 以及 fwiou 值，如下所示：
+
 ```
 各类iou值为： [0.53414416 0.60477744 0.67254459 0.71330089 0.32688211 0.28998783 0 0.61927597]
 平均iou值为： 0.4701141229616601
 加权fwiou值为： 0.5995258460006233
 ```
+
 其中大部分地貌场景的acc值都超过0.9，房屋、铁路道路的f1-score超过0.8,林草、房屋、铁路道路、水域的iou值超过0.6。
 
 ## 五、变化识别
@@ -165,6 +169,7 @@ python get_model_performance.py
 ![avartar](./output/out_picture/change_detect.png)
 
 使用以下程序进行变化识别检测。
+
 ```shell
 python detect_change.py
 ```
@@ -191,9 +196,11 @@ optional arguments:
 ```
 
 针对指定文件夹下的预处理对齐好的遥感图像文件进行变化识别，命名文件遵循以下规则：
+
 ```
 年份_地区id1_地区id2.tif
 ```
+
 不需要先进行地貌语义分割，直接根据文件夹下的图像文件，先进行语义分割，然后根据分割结果识别变化区域。
 
 输出结果为分块化的变化区域图像如下图所示：

@@ -1,9 +1,10 @@
+import os
+
+import numpy as np
 import segmentation_models_pytorch as smp
 import torch
-import os
 from segmentation_models_pytorch.losses import DiceLoss
 from torch.nn import CrossEntropyLoss
-import numpy as np
 from torchinfo import summary
 
 

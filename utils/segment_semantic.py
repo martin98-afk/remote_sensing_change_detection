@@ -1,5 +1,4 @@
 from glob import glob
-import collections
 
 from PIL import Image
 from osgeo import gdal
@@ -8,10 +7,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import *
+from utils.conn_mysql import *
 from utils.crf import DenseCRF
 from utils.datasets import SSDataRandomCrop
 from utils.detect_change_to_block import ARR2TIF
-from utils.gdal_utils import write_img
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import raster2vector
 
@@ -58,8 +57,8 @@ def slic_segment(image, num_segments=700, mask=None, visualize=True):
 
 
 def predict(model, image, ori_image, num_classes, args, threashold=0.2):
-    image = image.to(args.device)
-    image = image.half() if args.half else image
+    image = image.to(args['device'])
+    image = image.half() if args['half'] else image
     with torch.no_grad():
         output = torch.nn.Softmax(dim=1)(model(image))
         output = output.detach().cpu().numpy()
@@ -254,7 +253,7 @@ def concat_result(shape, TifArrayShape, npyfile, RepetitiveLength, RowOver, Colu
 
 @torch.no_grad()
 def test_big_image(model, image1_path, IMAGE_SIZE,
-                   num_classes, args):
+                   num_classes, args, denominator=1, addon=0):
     """
     对大型遥感图像进行切割以后，逐片进行语义分割，最后可以选择是否再进行超像素分割对语义分割结果进行后处理。
 
@@ -279,9 +278,12 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
     print("遥感图像分割后大小", TifArray.shape)
     RSPipeline.print_log("根据划分图像构造数据集")
     predicts = None
-    test_loader = get_dataloader(TifArray, batch_size=args.batch_size)
+    # 将待检测地貌类型的图像加载成dataloader形式方便数据读取
+    test_loader = get_dataloader(TifArray, batch_size=args['batch_size'])
+    # 连接mysql数据库，更新数据处理进度
+    mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
     RSPipeline.print_log("代入模型获得每小块验证结果")
-    for ori_image, image in tqdm(test_loader):
+    for i, (ori_image, image) in enumerate(tqdm(test_loader)):
         # TODO 获取当前进度并写入数据库之中
         output = predict(model, image, ori_image, num_classes, args)
         output = np.uint8(output)
@@ -289,30 +291,15 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
             predicts = output
         else:
             predicts = np.vstack([predicts, output])
+        progress = int(100 * i / len(test_loader) / denominator) + addon
+        if "id" in args.keys():
+            mysql_conn.write_to_mysql_progress(args["id"], str(progress) + "%")
 
     RSPipeline.print_log("预测完毕，拼接结果中")
     # 保存结果
     result_shape = (raw_image.shape[0], raw_image.shape[1])
     result_data = concat_result(result_shape, TifArray_shape, predicts, 64, RowOver,
                                 ColumnOver, IMAGE_SIZE)
-    # TODO 对结果进行slic超像素聚类，使得结果可视化效果更好
-    if args.slic > 0:
-        RSPipeline.print_log("拼接完成，正在使用slic算法对结果进行聚类合并")
-        slic_segments = slic_segment(np.repeat(result_data[..., np.newaxis], repeats=3, axis=-1),
-                                     num_segments=args.slic,
-                                     visualize=False)
-        for i in range(np.max(slic_segments) + 1):
-            pixels = result_data[slic_segments == i]
-            if len(pixels) > 1:
-                # 求同一个超像素下的众数并将该数值付给该超像素整体
-                data = collections.Counter(pixels)
-                data = dict(data)
-                # 获取出现最多次数的标签
-                index = np.argmax(list(data.values()))
-                # 获取众数
-                value = list(data.keys())[index]
-                result_data[slic_segments == i] = value
-        RSPipeline.print_log("合并完成")
 
     return result_data
 
@@ -332,7 +319,7 @@ def test_semantic_segment_files(model,
     :param args: 参数集合
     :return:
     """
-    output_dir = args.output_dir   # 输出文件夹
+    output_dir = args.output_dir  # 输出文件夹
     file_path = args.target_dir + "/" + args.file_path  # 使用的文件路径
     assert args.device == 'cpu' or 'cuda' in args.device, '所使用的机器类型必须为cpu或者cuda'
     image_list = [RSPipeline.check_path(path) for path in glob(file_path)] \
@@ -341,7 +328,7 @@ def test_semantic_segment_files(model,
     for i, image in enumerate(image_list):
         semantic_result = test_big_image(model, image,
                                          img_size, num_classes,
-                                         args)
+                                         vars(args))
         RSPipeline.print_log("语义分割已完成")
         image = gdal.Open(image)
 

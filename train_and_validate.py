@@ -1,9 +1,7 @@
 # encoding:utf-8
 import argparse
 import sys
-from glob import glob
 
-from config import *
 from utils.pipeline import RSPipeline
 
 """
@@ -38,13 +36,13 @@ def get_parser():
                         help="是否使用半精度训练，默认为True")
     parser.add_argument("--model-name", type=str, default="efficientnet-b0",
                         help="训练使用的骨干网络模型名称")
-    parser.add_argument("--batch-size", type=int, default=12,
+    parser.add_argument("--batch-size", type=int, default=8,
                         help="训练一批的图片数量")
     parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
     parser.add_argument("--ohem", type=bool, default=True,
                         help="是否使用在线难例挖掘")
-    parser.add_argument("--ignore-background", type=bool, default=False,
+    parser.add_argument("--ignore-background", type=bool, default=True,
                         help="训练时是否忽视背景类")
     parser.add_argument("--train-size", type=int, default=2000,
                         help="训练划分数据量")
@@ -131,16 +129,16 @@ if __name__ == '__main__':
     #                                   shp_path="real_data/修正shp/2021_1_3_res_0.5_semantic_result.shp",
     #                                   num_classes=num_classes,
     #                                   ind2num=ind2num)
-        # image_paths = glob("real_data/processed_data/2020_2_3_res_*.tif")
-        # image_paths.extend(
-        #     glob("real_data/processed_data/2020_2_4_res_*.tif")
-        # )
-        # for path in image_paths:
-        #     RSPipeline.update_polygon(args, image_path=path,
-        #                               shp_path="real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2_merged_fang/"
-        #                                        "LCRA_2020_2_merged.shp",
-        #                               num_classes=num_classes,
-        #                               ind2num=ind2num)
+    # image_paths = glob("real_data/processed_data/2020_2_3_res_*.tif")
+    # image_paths.extend(
+    #     glob("real_data/processed_data/2020_2_4_res_*.tif")
+    # )
+    # for path in image_paths:
+    #     RSPipeline.update_polygon(args, image_path=path,
+    #                               shp_path="real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2_merged_fang/"
+    #                                        "LCRA_2020_2_merged.shp",
+    #                               num_classes=num_classes,
+    #                               ind2num=ind2num)
 
     mm = RSPipeline(ind2label, num_classes + 1, args)
 
