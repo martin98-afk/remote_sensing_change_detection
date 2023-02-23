@@ -5,6 +5,7 @@ from glob import glob
 from os import path
 
 import numpy as np
+import onnxruntime
 import torch
 import torch.nn as nn
 import yaml
@@ -15,6 +16,7 @@ from torchinfo import summary
 from tqdm import tqdm
 
 from models import lovasz_losses as L
+from models.nested_unet import NestedUNet
 from models.swin_unet import SwinTransformerSys
 from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
@@ -68,7 +70,7 @@ class RSPipeline(object):
                                                device=self.device,
                                                pretrained_path=self.pretrained_model_path,
                                                pop_head=self.pop_head)
-        else:
+        elif "swin-unet" in self.model_name:
             model = SwinTransformerSys(img_size=512, num_classes=9)
             model = nn.DataParallel(model)
             if self.pretrained_model_path is not None and os.path.exists(
@@ -83,7 +85,23 @@ class RSPipeline(object):
                     print('历史最佳模型已读取!')
                 except:
                     print("参数发生变化，历史模型无效！")
+        elif "nested_unet" in self.model_name:
+            model = NestedUNet(out_ch=9)
+            # model = nn.DataParallel(model)
+            if self.pretrained_model_path is not None and os.path.exists(
+                    self.pretrained_model_path):
+                try:
+                    ckpt = torch.load(self.pretrained_model_path,
+                                      map_location=torch.device(self.device))
+                    model.load_state_dict(
+                            ckpt,
+                            strict=False
+                    )
+                    print('历史最佳模型已读取!')
+                except:
+                    print("参数发生变化，历史模型无效！")
         # 优化器，使用adamw优化器
+        model = model.to(self.device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
         RSPipeline.print_log("模型创建完毕")
         return model, optimizer
@@ -320,10 +338,11 @@ class RSPipeline(object):
             yaml.dump(to_yaml, f, default_flow_style=False)
 
     @staticmethod
-    def load_model(model_info_path, device='cuda'):
+    def load_model(model_info_path, model_type, device="cuda"):
         """
         根据提供的yaml文件路径，解析模型参数，并导入模型。
 
+        :param model_type:
         :param device:
         :param model_info_path:
         :return:
@@ -335,28 +354,43 @@ class RSPipeline(object):
         pretrained_path = data['save_path']
         model_name = data['model_name']
         image_size = data['image_size'][0]
-        if "efficientnet" in model_name:
-            model = get_semantic_segment_model(num_classes=num_classes,
-                                               model_name=model_name,
-                                               device="cpu",
-                                               pretrained_path=pretrained_path,
-                                               pop_head=False)
-        else:
-            model = SwinTransformerSys(img_size=image_size, num_classes=num_classes)
-            model = nn.DataParallel(model)
-            if pretrained_path is not None and os.path.exists(pretrained_path):
-                try:
-                    ckpt = torch.load(pretrained_path, map_location=torch.device(device))
-                    model.load_state_dict(
-                            ckpt,
-                            strict=False
-                    )
-                    print('历史最佳模型已读取!')
-                except:
-                    print("参数发生变化，历史模型无效！")
 
-        model.to(device)
-        model.eval()
+        if model_type == "pytorch":
+            if "efficientnet" in model_name:
+                model = get_semantic_segment_model(num_classes=num_classes,
+                                                   model_name=model_name,
+                                                   device="cpu",
+                                                   pretrained_path=pretrained_path,
+                                                   pop_head=False)
+            else:
+                model = SwinTransformerSys(img_size=image_size, num_classes=num_classes)
+                model = nn.DataParallel(model)
+                if pretrained_path is not None and os.path.exists(pretrained_path):
+                    try:
+                        ckpt = torch.load(pretrained_path, map_location=torch.device(device))
+                        model.load_state_dict(
+                                ckpt,
+                                strict=False
+                        )
+                        print('历史最佳模型已读取!')
+                    except:
+                        print("参数发生变化，历史模型无效！")
+            model.to(device)
+            model.eval()
+            # # 将pytorch模型转换为TensorRT模型，加速推理
+            # x = torch.randn((1, 3, 512, 512)).to(device)
+            #
+            # # pytorch 模型 -》 TorchScript模型
+            # model = torch.jit.trace(model, [x])
+
+        elif model_type == "onnx":
+            # onnxmodel = onnx.load("output/ss_eff_b0.onnx")
+            # onnx.checker.check_model(onnxmodel)
+            model = onnxruntime.InferenceSession("../output/ss_eff_b0.onnx",
+                                                 providers=['TensorrtExecutionProvider',
+                                                            'CUDAExecutionProvider'])
+        else:
+            raise "model type not support, only support onnx and pytorch!"
         return data, model
 
     @staticmethod

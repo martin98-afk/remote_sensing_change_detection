@@ -2,10 +2,12 @@
 import time
 
 import seaborn as sns
+from osgeo import gdal
 from skimage.segmentation import mark_boundaries, slic
 
 from config import *
 from remotesensing_alg.fast_glcm import *
+from utils.gdal_utils import write_img
 
 warnings.filterwarnings('ignore')
 
@@ -76,12 +78,10 @@ def extract_target(class_id, name):
         # 添加第四个维度用来区分背景和前景，目前只在qgis中有用，在算法中并没有发挥到判别前景还有背景的作用。
         ones = 255 * np.ones_like(mask)
         ones[mask == 0] = 0
-
-        # 对蒙版进行repeat从而使得 在判断条件以后可以直接对图像区域进行筛选。
-        mask = np.repeat(mask[..., np.newaxis], 3, 2)
         # gdal读取图片后 channel在第一位
         image_array = np.transpose(image.ReadAsArray(), (1, 2, 0))
-        image_array[mask == 0] = 0  # 直接将不需要部分取0
+        # 对蒙版进行repeat从而使得 在判断条件以后可以直接对图像区域进行筛选。
+        image_array[np.repeat(mask[..., np.newaxis], 3, 2) == 0] = 0  # 直接将不需要部分取0
         # TODO 使用语义分割结果对栅格图像进行异常值剔除
         if "2021" in path1:
             ss_result = Image.open(path4)  # 根据语义分割对三调提取后的区域进行异常区域剔除
@@ -178,7 +178,7 @@ def feature_extractor(image, gray_image, image_segments, label):
 # TODO 根据聚类后的图斑，对每个图斑进行特征提取
 # 目前先对耕地和建设用地进行分类，从三调矢量文件中先筛选出对应耕地和建设用地的栅格数据，再使用slic进行图斑聚类划分，最后对每个小图斑进行特征提取，用于分类。
 print("正在进行图斑特征提取.")
-num_segments = 500
+num_segments = 300
 
 feature_df = None
 for i in range(1, 5):
@@ -309,14 +309,18 @@ print(confusion_matrix(predict_test, y_test))
 
 # TODO 对要进行变化识别的图片先进行超像素分割，再提取光谱、纹理特征。
 for i in range(1, 5):
+    # 使用当年三调图斑提取待检测变化的目标时域的遥感影像中的指定区域，并使用slic超像素分割
     target_image_path = f"real_data/trad_alg/2020_1_{i}_res_{res}_耕地.tif"
     image = Image.open(target_image_path)
     gray_image = np.array(image.convert("L")).astype(np.float32)
     image = np.array(image).astype(np.float32)
     image_segments = slic_segment(image[..., :3], mask=image[..., 3],
                                   visualize=False, num_segments=num_segments)
+    # 然后提取每个超像素的光谱、纹理特征信息
     features = feature_extractor(image, gray_image, image_segments=image_segments, label=0)
     features = features[features.columns[:-1]].values
+    # 输入到训练好的lightgbm模型中预测每块超像素块的类别信息
+    # 使用指定阈值进行过滤
     predict = clf.predict_proba(features)
     detect_change = np.zeros_like(image_segments)
     for j in range(predict.shape[0]):

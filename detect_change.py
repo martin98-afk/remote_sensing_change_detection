@@ -8,21 +8,23 @@ from utils.segment_semantic import *
 
 
 def get_parser():
-    '''
+    """
     收集命令行提供的参数
 
     :return:
-    '''
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0.yaml',
                         help='需要使用的模型信息文件存储路径')
-    parser.add_argument('--target-dir', type=str, default='real_data/processed_data',
+    parser.add_argument('--model-type', type=str, default='pytorch',
+                        help='需要使用的模型信息文件存储路径')
+    parser.add_argument('--target-dir', type=str, default='./real_data/processed_data',
                         help='需要进行预测的图像存储路径')
-    parser.add_argument('--file-path', type=str, default='2020_1_*_res_0.5.tif',
+    parser.add_argument('--file-path', type=str, default='2021_1_*_res_0.5.tif',
                         help='确认训练模型使用的机器')
     parser.add_argument('--output-dir', type=str, default='output/semantic_result',
                         help='输出结果存储路径')
-    parser.add_argument('--save-tif', action='store_true',
+    parser.add_argument('--remove-tif', action='store_true',
                         help='是否要将结果储存为栅格形式')
     parser.add_argument('--mode', type=str, default='segment-semantic',
                         help='程序运行模式，包括detect-change、segment-semantic、detect-change-shp')
@@ -30,7 +32,7 @@ def get_parser():
                         help='模型计算时是否开启半精度运算')
     parser.add_argument('--slic', type=int, default=0,
                         help='是否对分割结果进行slic聚类算法后处理, 设置为0则不使用slic算法')
-    parser.add_argument('--batch-size', type=int, default=6,
+    parser.add_argument('--batch-size', type=int, default=1,
                         help='进行验证时使用的批量大小')
     parser.add_argument('--device', type=str, default='cuda', help='确认训练模型使用的机器')
     parser.add_argument('--log-output', action='store_true', help='在控制台打印程序运行结果')
@@ -103,7 +105,7 @@ def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes,
     # 输入两年份的图片
     # 进行变化识别
     tif_path = 'output/semantic_result/tif/detect_change.tif'
-    shp_path = 'output/semantic_result/change_result/detect_change_block.shp'
+    # shp_path = 'output/semantic_result/change_result/detect_change_block.shp'
     tif_block_path = 'output/semantic_result/tif/detect_change_block.tif'
     semantic_result_src = test_big_image(model, src_image,
                                          IMAGE_SIZE, num_classes,
@@ -111,6 +113,7 @@ def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes,
     semantic_result_target = test_big_image(model, target_image,
                                             IMAGE_SIZE, num_classes,
                                             args, denominator=2, addon=50)
+    assert semantic_result_src.shape == semantic_result_target.shape, "输入数据形状大小不一致"
     RSPipeline.print_log('两年份遥感数据语义分割已完成')
     image = gdal.Open(src_image)
     change_result = detect_change(semantic_result_src, semantic_result_target)
@@ -125,7 +128,8 @@ def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes,
     change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(tif_path, block_size)
     arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, threshold, block_size)
     ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, tif_block_path)
-    raster2vector(tif_block_path, vector_path=shp_path)
+    # raster2vector(tif_block_path, vector_path=shp_path)
+    return tif_block_path
 
 
 if __name__ == '__main__':
@@ -138,8 +142,9 @@ if __name__ == '__main__':
         print('输出输入到日志中!')
 
     # 导入模型参数
-    data, model = RSPipeline.load_model(args.model_info_path, device=args.device)
-    model = model.half() if args.half else model
+    data, model = RSPipeline.load_model(args.model_info_path, args.model_type, args.device)
+    if args.model_type == "pytorch":
+        model = model.half() if args.half else model
     IMAGE_SIZE = data['image_size'][0]
     num_classes = data['num_classes']
     ind2label = data['index to label']
@@ -172,7 +177,7 @@ if __name__ == '__main__':
             image = gdal.Open(image_path)
             semantic_result = test_big_image(model, image_path,
                                              IMAGE_SIZE, num_classes,
-                                             args)
+                                             vars(args))
             mask = Image.open(f'real_data/trad_alg/2021_{place}_{part}_res_0.5_耕地_mask.tif')
             mask = np.array(mask)
             semantic_result[mask == 0] = 0
@@ -202,10 +207,10 @@ if __name__ == '__main__':
                 shp_path = args.output_dir + f'/change_result/detect_change_{i}.shp'
             semantic_result_2020 = test_big_image(model, image_2020,
                                                   IMAGE_SIZE, num_classes,
-                                                  args)
+                                                  vars(args))
             semantic_result_2021 = test_big_image(model, image_2021,
                                                   IMAGE_SIZE, num_classes,
-                                                  args)
+                                                  vars(args))
             RSPipeline.print_log('两年份遥感数据语义分割已完成')
             image = gdal.Open(image_2020)
             change_result = detect_change(semantic_result_2020, semantic_result_2021)

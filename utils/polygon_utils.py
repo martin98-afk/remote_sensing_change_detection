@@ -55,13 +55,16 @@ def raster2vector(raster_path, vector_path, label=None,
     :return:
     """
     raster = gdal.Open(raster_path)
-    target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
-    raster = transform_geoinfo(raster, target_image)
-    band = raster.GetRasterBand(1)
+
     # 读取栅格的投影信息， 为后面生成的矢量赋予相同的投影信息
     prj = osr.SpatialReference()
-    prj.ImportFromWkt(raster.GetProjection())
-
+    try:
+        target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
+        raster = transform_geoinfo(raster, target_image)
+        band = raster.GetRasterBand(1)
+        prj.ImportFromWkt(raster.GetProjection())
+    except:
+        band = np.array(Image.open(raster_path))
     drv = ogr.GetDriverByName("ESRI Shapefile")
     # 若文件已经存在，删除
     if os.path.exists(vector_path):

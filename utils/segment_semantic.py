@@ -33,6 +33,18 @@ post_processor = DenseCRF(
 )
 
 
+def to_numpy(tensor):
+    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
+
+
+def softmax(array):
+    array = np.exp(array)
+    sum_array = np.sum(array, axis=1)
+    sum_array = np.expand_dims(sum_array, axis=1)
+    sum_array = np.repeat(sum_array, repeats=array.shape[1], axis=1)
+    return array / sum_array
+
+
 def slic_segment(image, num_segments=700, mask=None, visualize=True):
     """
     使用slic算法对图像进行超像素划分。
@@ -56,12 +68,27 @@ def slic_segment(image, num_segments=700, mask=None, visualize=True):
     return segments
 
 
-def predict(model, image, ori_image, num_classes, args, threashold=0.2):
-    image = image.to(args['device'])
-    image = image.half() if args['half'] else image
-    with torch.no_grad():
-        output = torch.nn.Softmax(dim=1)(model(image))
-        output = output.detach().cpu().numpy()
+def predict(model, image, ori_image, args, threashold=0.2):
+    """
+    针对不同的模型提供不同输入数据的途径，现支持onnx模型以及pytorch模型。
+
+    :param model:
+    :param image:
+    :param ori_image:
+    :param args:
+    :param threashold:
+    :return:
+    """
+    if args['model_type'] == "pytorch":
+        image = image.to(args['device'])
+        image = image.half() if args['half'] else image
+        with torch.no_grad():
+            output = torch.nn.Softmax(dim=1)(model(image))
+            output = output.detach().cpu().numpy()
+    elif args['model_type'] == "onnx":
+        output = model.run(["output"], {"input": to_numpy(image)})[0]
+        output = softmax(output)
+
     ori_image = ori_image.numpy().astype(np.uint8)
     # 使用dense crf进行后处理
     for i in range(output.shape[0]):
@@ -69,7 +96,7 @@ def predict(model, image, ori_image, num_classes, args, threashold=0.2):
     # 根据阈值进行筛选，判断概率小于阈值的定为背景类。
     output_max = np.max(output, axis=1)
     output_result = np.argmax(output, axis=1)
-    output_result[output_max < threashold] = num_classes - 1
+    output_result[output_max < threashold] = 0
     return output_result
 
 
@@ -285,7 +312,7 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
     RSPipeline.print_log("代入模型获得每小块验证结果")
     for i, (ori_image, image) in enumerate(tqdm(test_loader)):
         # TODO 获取当前进度并写入数据库之中
-        output = predict(model, image, ori_image, num_classes, args)
+        output = predict(model, image, ori_image, args)
         output = np.uint8(output)
         if predicts is None:
             predicts = output
@@ -296,6 +323,8 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
             mysql_conn.write_to_mysql_progress(args["id"], str(progress) + "%")
 
     RSPipeline.print_log("预测完毕，拼接结果中")
+    if "id" in args.keys():
+        mysql_conn.write_to_mysql_progress(args["id"], "100%")
     # 保存结果
     result_shape = (raw_image.shape[0], raw_image.shape[1])
     result_data = concat_result(result_shape, TifArray_shape, predicts, 64, RowOver,
@@ -336,5 +365,5 @@ def test_semantic_segment_files(model,
         shp_path = f"{output_dir}/shp/{file_list[i]}_semantic_result.shp"
         ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
         RSPipeline.print_log("分割结果栅格数据保存已完成")
-        raster2vector(tif_path, vector_path=shp_path, label=ind2label, remove_tif=args.save_tif)
+        raster2vector(tif_path, vector_path=shp_path, label=ind2label, remove_tif=args.remove_tif)
         RSPipeline.print_log("分割结果矢量数据保存已完成")

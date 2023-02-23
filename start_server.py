@@ -12,7 +12,7 @@ from utils.pipeline import RSPipeline
 
 app = Flask(__name__)
 
-data, model = RSPipeline.load_model('output/ss_eff_b0.yaml', device="cuda")
+data, model = RSPipeline.load_model('output/ss_eff_b0.yaml', model_type="pytorch", device="cuda:1")
 IMAGE_SIZE = data['image_size'][0]  # 划分图像块大小
 num_classes = data['num_classes']  # 地貌分类数量
 
@@ -45,28 +45,28 @@ def line_pass_count():
     args["id"] = info_dict["id"]
     os.makedirs("real_data/cache", exist_ok=True)
     # 导入模型参数
-    minio_store = MinioStore(host="192.168.9.153:9000", access_key="xw-admin",
+    minio_store = MinioStore(host="192.168.9.153:9000",
+                             access_key="xw-admin",
                              secret_key="xw-admin",
-                             bucket="ai-platform", save_dirs="")
+                             bucket="ai-platform",
+                             save_dirs="")
 
     read_url("real_data/cache/src_image.tif", info_dict["referImageUrl"])
     read_url("real_data/cache/target_image.tif", info_dict["comparisonImageUrl"])
 
-    change_block_detect(model, src_image="real_data/cache/src_image.tif",
-                        target_image="real_data/cache/target_image.tif",
-                        IMAGE_SIZE=IMAGE_SIZE, num_classes=num_classes, args=args)
-    # 将识别
-    file_list = glob("output/semantic_result/change_result  /detect_change_block.*")
-    file_list = [RSPipeline.check_path(path) for path in file_list]
-    save_urls = []
-    for file in file_list:
-        minio_store.fput_object(f"change_result/{file.split('/')[-1]}", file)
-        save_urls.append(
-                f"http://192.168.9.153:9000/minio/ai-platform/change_result/{file.split('/')[-1]}")
+    save_path = change_block_detect(model, src_image="real_data/cache/src_image.tif",
+                                    target_image="real_data/cache/target_image.tif",
+                                    IMAGE_SIZE=IMAGE_SIZE, num_classes=num_classes, args=args)
+    # 将识别结果上传minio服务器
+    # file_list = glob("output/semantic_result/change_result  /detect_change_block.*")
+    # file_list = [RSPipeline.check_path(path) for path in file_list]
+    # save_urls = []
+    minio_store.fput_object(f"change_result/{save_path.split('/')[-1]}", save_path)
+    save_url = f"http://192.168.9.153:9000/minio/ai-platform/change_result/{save_path.split('/')[-1]}"
 
     # TODO 将存储的文件url以及任务id存储到数据库中。
     mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
-    mysql_conn.write_to_mysql_relation(info_dict["id"], " ".join(save_urls))
+    mysql_conn.write_to_mysql_relation(info_dict["id"], save_url)
 
 
 if __name__ == '__main__':

@@ -25,21 +25,22 @@ def get_parser():
                         help="标签存储路径")
     parser.add_argument("--update-polygon", type=bool, default=True,
                         help="是否更新训练标签")
-    parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0.pth",
+    parser.add_argument("--model-save-path", type=str, default="output/nested_unet.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
+    parser.add_argument("--pretrained-model-path", type=str, default="output/nested_unet.pth",
+                        help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
+    parser.add_argument("--model-name", type=str, default="nested_unet",
+                        help="训练使用的骨干网络模型名称")
     parser.add_argument("--pop-head", type=bool, default=True,
                         help="是否需要將模型的分類頭刪除")
-
     parser.add_argument("--image-size", nargs="+", type=int, default=[512, 512],
                         help="[图片宽， 图片高]")
     parser.add_argument("--fp16", type=bool, default=True,
                         help="是否使用半精度训练，默认为True")
-    parser.add_argument("--model-name", type=str, default="efficientnet-b0",
-                        help="训练使用的骨干网络模型名称")
+
     parser.add_argument("--batch-size", type=int, default=8,
                         help="训练一批的图片数量")
-    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0.pth",
-                        help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
+
     parser.add_argument("--ohem", type=bool, default=True,
                         help="是否使用在线难例挖掘")
     parser.add_argument("--ignore-background", type=bool, default=True,
@@ -143,5 +144,5 @@ if __name__ == '__main__':
     mm = RSPipeline(ind2label, num_classes + 1, args)
 
     # 打印模型结构
-    mm.get_model_summary()
+    # mm.get_model_summary()
     mm.run(visualize=False)
