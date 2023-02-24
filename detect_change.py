@@ -16,7 +16,7 @@ def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0.yaml',
                         help='需要使用的模型信息文件存储路径')
-    parser.add_argument('--model-type', type=str, default='pytorch',
+    parser.add_argument('--model-type', type=str, default='onnx',
                         help='需要使用的模型信息文件存储路径')
     parser.add_argument('--target-dir', type=str, default='./real_data/processed_data',
                         help='需要进行预测的图像存储路径')
@@ -32,7 +32,7 @@ def get_parser():
                         help='模型计算时是否开启半精度运算')
     parser.add_argument('--slic', type=int, default=0,
                         help='是否对分割结果进行slic聚类算法后处理, 设置为0则不使用slic算法')
-    parser.add_argument('--batch-size', type=int, default=1,
+    parser.add_argument('--batch-size', type=int, default=12,
                         help='进行验证时使用的批量大小')
     parser.add_argument('--device', type=str, default='cuda', help='确认训练模型使用的机器')
     parser.add_argument('--log-output', action='store_true', help='在控制台打印程序运行结果')
@@ -142,9 +142,10 @@ if __name__ == '__main__':
         print('输出输入到日志中!')
 
     # 导入模型参数
-    data, model = RSPipeline.load_model(args.model_info_path, args.model_type, args.device)
-    if args.model_type == "pytorch":
-        model = model.half() if args.half else model
+    data, model = RSPipeline.load_model(args.model_info_path,
+                                        args.model_type,
+                                        args.device,
+                                        args.half)
     IMAGE_SIZE = data['image_size'][0]
     num_classes = data['num_classes']
     ind2label = data['index to label']

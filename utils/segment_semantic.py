@@ -11,6 +11,7 @@ from utils.conn_mysql import *
 from utils.crf import DenseCRF
 from utils.datasets import SSDataRandomCrop
 from utils.detect_change_to_block import ARR2TIF
+from utils.output_onnx import to_numpy, softmax
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import raster2vector
 
@@ -31,18 +32,6 @@ post_processor = DenseCRF(
         bi_rgb_std=13,  # 5, 5
         bi_w=10,  # 4, 5
 )
-
-
-def to_numpy(tensor):
-    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
-
-
-def softmax(array):
-    array = np.exp(array)
-    sum_array = np.sum(array, axis=1)
-    sum_array = np.expand_dims(sum_array, axis=1)
-    sum_array = np.repeat(sum_array, repeats=array.shape[1], axis=1)
-    return array / sum_array
 
 
 def slic_segment(image, num_segments=700, mask=None, visualize=True):
@@ -86,7 +75,9 @@ def predict(model, image, ori_image, args, threashold=0.2):
             output = torch.nn.Softmax(dim=1)(model(image))
             output = output.detach().cpu().numpy()
     elif args['model_type'] == "onnx":
-        output = model.run(["output"], {"input": to_numpy(image)})[0]
+        image = to_numpy(image)
+        image = image.astype(np.float16) if args['half'] else image.astype(np.float32)
+        output = model.run(["output"], {"input": image})[0]
         output = softmax(output)
 
     ori_image = ori_image.numpy().astype(np.uint8)

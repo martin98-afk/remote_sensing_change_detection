@@ -5,7 +5,6 @@ from glob import glob
 from os import path
 
 import numpy as np
-import onnxruntime
 import torch
 import torch.nn as nn
 import yaml
@@ -21,6 +20,7 @@ from models.swin_unet import SwinTransformerSys
 from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
 from utils.datasets import SSDataRandomCrop
+from utils.output_onnx import torch2onnx, load_onnx_model
 from utils.polygon_utils import read_shp, shp2tif
 from utils.visualize_result import ResultVisualization
 
@@ -44,6 +44,7 @@ class RSPipeline(object):
         self.image_size = args.image_size[0]
         self.device = args.device
         self.model_name = args.model_name
+        self.onnx_model_name = self.model_name.replace("pth", "onnx")
         self.pretrained_model_path = args.pretrained_model_path
         self.model_save_path = args.model_save_path
         self.fp16 = args.fp16
@@ -296,6 +297,7 @@ class RSPipeline(object):
                 best_acc = valid_f1.avg
                 RSPipeline.print_log(f"在当前训练轮数中找到最佳模型，训练轮数为{epoch + 1}")
                 torch.save(self.model.state_dict(), self.model_save_path)
+                torch2onnx(model, self.onnx_model_name)
                 RSPipeline.print_log("保存模型中")
                 self.update_model_score("f1-score", best_acc)
 
@@ -338,7 +340,32 @@ class RSPipeline(object):
             yaml.dump(to_yaml, f, default_flow_style=False)
 
     @staticmethod
-    def load_model(model_info_path, model_type, device="cuda"):
+    def get_pytorch_model(model_name, num_classes, pretrained_path, image_size, device):
+        if "efficientnet" in model_name:
+            model = get_semantic_segment_model(num_classes=num_classes,
+                                               model_name=model_name,
+                                               device="cpu",
+                                               pretrained_path=pretrained_path,
+                                               pop_head=False)
+        else:
+            model = SwinTransformerSys(img_size=image_size, num_classes=num_classes)
+            model = nn.DataParallel(model)
+            if pretrained_path is not None and os.path.exists(pretrained_path):
+                try:
+                    ckpt = torch.load(pretrained_path, map_location=torch.device(device))
+                    model.load_state_dict(
+                            ckpt,
+                            strict=False
+                    )
+                    print('历史最佳模型已读取!')
+                except:
+                    print("参数发生变化，历史模型无效！")
+        model.to(device)
+        model.eval()
+        return model
+
+    @staticmethod
+    def load_model(model_info_path, model_type, device="cuda", half=True):
         """
         根据提供的yaml文件路径，解析模型参数，并导入模型。
 
@@ -354,41 +381,25 @@ class RSPipeline(object):
         pretrained_path = data['save_path']
         model_name = data['model_name']
         image_size = data['image_size'][0]
-
+        onnx_path = pretrained_path.replace("pth", "onnx")
         if model_type == "pytorch":
-            if "efficientnet" in model_name:
-                model = get_semantic_segment_model(num_classes=num_classes,
-                                                   model_name=model_name,
-                                                   device="cpu",
-                                                   pretrained_path=pretrained_path,
-                                                   pop_head=False)
-            else:
-                model = SwinTransformerSys(img_size=image_size, num_classes=num_classes)
-                model = nn.DataParallel(model)
-                if pretrained_path is not None and os.path.exists(pretrained_path):
-                    try:
-                        ckpt = torch.load(pretrained_path, map_location=torch.device(device))
-                        model.load_state_dict(
-                                ckpt,
-                                strict=False
-                        )
-                        print('历史最佳模型已读取!')
-                    except:
-                        print("参数发生变化，历史模型无效！")
-            model.to(device)
-            model.eval()
-            # # 将pytorch模型转换为TensorRT模型，加速推理
-            # x = torch.randn((1, 3, 512, 512)).to(device)
-            #
-            # # pytorch 模型 -》 TorchScript模型
-            # model = torch.jit.trace(model, [x])
-
+            model = RSPipeline.get_pytorch_model(model_name, num_classes,
+                                                 pretrained_path, image_size,
+                                                 device)
+            model = model.half() if half else model
         elif model_type == "onnx":
-            # onnxmodel = onnx.load("output/ss_eff_b0.onnx")
-            # onnx.checker.check_model(onnxmodel)
-            model = onnxruntime.InferenceSession("../output/ss_eff_b0.onnx",
-                                                 providers=['TensorrtExecutionProvider',
-                                                            'CUDAExecutionProvider'])
+            model = RSPipeline.get_pytorch_model(model_name, num_classes,
+                                                 pretrained_path, image_size,
+                                                 "cuda")
+            model = model.half() if half else model
+            sample_data = np.random.randn(1, 3, 512, 512)
+            sample_data = sample_data.astype(np.float16) if half else sample_data.astype(
+                np.float32)
+            torch2onnx(model, onnx_path,
+                       sample_data=sample_data)
+            del model
+            gc.collect()
+            model = load_onnx_model(onnx_path, device)
         else:
             raise "model type not support, only support onnx and pytorch!"
         return data, model
