@@ -391,7 +391,7 @@ def joint_polygon(target_shp_file, con_shp_file):
         for i in range(len(detect_ind)):
             for j in range(len(target)):
                 if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area \
-                        / target.iloc[j, 1].area > 0.1:
+                        / target.iloc[j, 1].area > 0.3:
                     pop_list.append(j)
         pop_list = set(pop_list)
         if save_shp is None:

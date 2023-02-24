@@ -1,6 +1,7 @@
 # encoding:utf-8
 import argparse
 import sys
+import time
 
 from utils.detect_change_to_block import *
 from utils.polygon_utils import joint_polygon, shp2tif
@@ -83,7 +84,7 @@ def change_polygon_detect(model, target_image, IMAGE_SIZE, num_classes, args):
     image = gdal.Open(target_image)
     semantic_result = test_big_image(model, target_image,
                                      IMAGE_SIZE, num_classes,
-                                     args)
+                                     args, denominator=2, addon=0)
     ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
     raster2vector(tif_path, vector_path=shp_path, remove_tif=False)
     # TODO 根据耕地mask裁剪出对应耕地识别结果。
@@ -109,7 +110,7 @@ def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes,
     # 进行变化识别
     tif_path = 'output/semantic_result/tif/detect_change.tif'
     # shp_path = 'output/semantic_result/change_result/detect_change_block.shp'
-    tif_block_path = 'output/semantic_result/tif/detect_change_block.tif'
+    tif_block_path = f'output/semantic_result/tif/detect_change_block_{round(time.time())}.tif'
     semantic_result_src = test_big_image(model, src_image,
                                          IMAGE_SIZE, num_classes,
                                          args, denominator=2, addon=0)
@@ -205,7 +206,7 @@ if __name__ == '__main__':
             # 将变化结果保存为栅格数据
             ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
             # 将变化结果保存为矢量数据
-            raster2vector(tif_path, vector_path=result_shp_path, remove_tif=False)
+            raster2vector(tif_path, vector_path=result_shp_path, remove_tif=True)
             # TODO 根据耕地mask裁剪出对应耕地识别结果。
             # 将检测出的变化区域转换为原始三调图斑，如果三调图斑中一个图斑中有0.1部分的面积被覆盖到，就算这个图斑为变化区域，并存储最终结果。
             RSPipeline.print_log('开始将变化识别结果图斑化')

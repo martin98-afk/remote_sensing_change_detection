@@ -1,6 +1,5 @@
 # encoding:utf-8
 import os
-from glob import glob
 
 import requests
 from flask import Flask, request
@@ -31,7 +30,7 @@ def read_url(save_path, url_path):
 
 
 @app.route("/detect_change", methods=['POST'])
-def line_pass_count():
+def detect_change():
     """
 
     :return:
@@ -56,17 +55,14 @@ def line_pass_count():
 
     read_url("real_data/cache/src_image.tif", info_dict["referImageUrl"])
     read_url("real_data/cache/target_image.tif", info_dict["comparisonImageUrl"])
-
     save_path = change_block_detect(model, src_image="real_data/cache/src_image.tif",
                                     target_image="real_data/cache/target_image.tif",
                                     IMAGE_SIZE=IMAGE_SIZE, num_classes=num_classes, args=args)
     # 将识别结果上传minio服务器
-    # file_list = glob("output/semantic_result/change_result  /detect_change_block.*")
-    # file_list = [RSPipeline.check_path(path) for path in file_list]
-    # save_urls = []
-    minio_store.fput_object(f"change_result/{save_path.split('/')[-1]}", save_path)
-    save_url = f"http://192.168.9.153:9000/minio/ai-platform/change_result/{save_path.split('/')[-1]}"
-
+    file_name = save_path.split('/')[-1]
+    minio_store.fput_object(f"change_result/{file_name}", save_path)
+    save_url = f"http://192.168.9.153:9000/ai-platform/change_result/{file_name}"
+    os.remove(save_path)
     # TODO 将存储的文件url以及任务id存储到数据库中。
     mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
     mysql_conn.write_to_mysql_relation(info_dict["id"], save_url)
