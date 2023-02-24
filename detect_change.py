@@ -3,7 +3,7 @@ import argparse
 import sys
 
 from utils.detect_change_to_block import *
-from utils.polygon_utils import joint_polygon
+from utils.polygon_utils import joint_polygon, shp2tif
 from utils.segment_semantic import *
 
 
@@ -16,17 +16,20 @@ def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0.yaml',
                         help='需要使用的模型信息文件存储路径')
-    parser.add_argument('--model-type', type=str, default='onnx',
+    parser.add_argument('--model-type', type=str, default='pytorch',
                         help='需要使用的模型信息文件存储路径')
     parser.add_argument('--target-dir', type=str, default='./real_data/processed_data',
                         help='需要进行预测的图像存储路径')
-    parser.add_argument('--file-path', type=str, default='2021_1_*_res_0.5.tif',
+    parser.add_argument('--file-path', type=str, default='2020_1_3_res_0.5.tif',
                         help='确认训练模型使用的机器')
+    parser.add_argument('--shp-path', type=str,
+                        default='real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp',
+                        help='变化识别中参考的矢量文件路径，在detect-change-shp模式下使用')
     parser.add_argument('--output-dir', type=str, default='output/semantic_result',
                         help='输出结果存储路径')
     parser.add_argument('--remove-tif', action='store_true',
                         help='是否要将结果储存为栅格形式')
-    parser.add_argument('--mode', type=str, default='segment-semantic',
+    parser.add_argument('--mode', type=str, default='detect-change-shp',
                         help='程序运行模式，包括detect-change、segment-semantic、detect-change-shp')
     parser.add_argument('--half', action='store_true',
                         help='模型计算时是否开启半精度运算')
@@ -44,7 +47,7 @@ def get_parser():
     return opt
 
 
-def detect_change(image0, image1, include_class=[1], identify_classes=[2, 3, 4, 5, 8]):
+def detect_change(image0, image1, include_class=[1], identify_classes=[3, 4, 5, 8]):
     '''
     指定要检测的标签，检测image 1相比image 0中农田区域变化成指定标签地形的区域。
 
@@ -127,6 +130,7 @@ def change_block_detect(model, src_image, target_image, IMAGE_SIZE, num_classes,
 
     change_data, num_w, num_h, rm_w, rm_h, origin_proj = load_tif(tif_path, block_size)
     arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, threshold, block_size)
+
     ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, tif_block_path)
     # raster2vector(tif_block_path, vector_path=shp_path)
     return tif_block_path
@@ -170,26 +174,44 @@ if __name__ == '__main__':
     elif args.mode == 'detect-change-shp':
         RSPipeline.print_log('正在执行依据图斑变化检测模块')
         image_list = glob(os.path.join(args.target_dir, args.file_path))
-
-        for i, image_path in enumerate(image_list):
-            place, part = image_path.split('_')[-4], image_path.split('_')[-3]
-            tif_path = args.output_dir + f'/tif/detect_change_{place}_{part}.tif'
-            shp_path = args.output_dir + f'/change_result/detect_change_{place}_{part}.shp'
+        # 防止windows环境glob获取路径中包含\\
+        image_list = [RSPipeline.check_path(path) for path in image_list]
+        # 根据图像和对应的矢量路劲制作模板
+        save_path = [path.replace("processed_data", "trad_alg")
+                         .replace(".tif", f"_mask.tif") for path in image_list]
+        # 将耕地矢量图斑文件转为栅格数据
+        for image_path, save in zip(image_list, save_path):
+            shp2tif(shp_path=args.shp_path,
+                    refer_tif_path=image_path,
+                    target_tif_path=save,
+                    attribute_field="DLBM",
+                    nodata_value=0)
+        RSPipeline.print_log('根据图像和对应的矢量路劲制作模板完成')
+        for i, (image_path, mask_path) in enumerate(zip(image_list, save_path)):
+            file_name = image_path.split('/')[-1][:-4]
+            # 确定最后变化结果保存路径
+            tif_path = args.output_dir + f'/tif/detect_change_{file_name}.tif'
+            result_shp_path = args.output_dir + f'/change_result/detect_change_{file_name}.shp'
+            # 打开目标图像获取图像的地理位置信息
             image = gdal.Open(image_path)
+            # 进行地貌类型识别
             semantic_result = test_big_image(model, image_path,
                                              IMAGE_SIZE, num_classes,
                                              vars(args))
-            mask = Image.open(f'real_data/trad_alg/2021_{place}_{part}_res_0.5_耕地_mask.tif')
+            # 打开当前影像的三调耕地图斑模板，将耕地以外的识别结果都删除，方便统计变化区域
+            mask = Image.open(mask_path)
             mask = np.array(mask)
             semantic_result[mask == 0] = 0
+            # 将变化结果保存为栅格数据
             ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
-            raster2vector(tif_path, vector_path=shp_path, remove_tif=False)
+            # 将变化结果保存为矢量数据
+            raster2vector(tif_path, vector_path=result_shp_path, remove_tif=False)
             # TODO 根据耕地mask裁剪出对应耕地识别结果。
             # 将检测出的变化区域转换为原始三调图斑，如果三调图斑中一个图斑中有0.1部分的面积被覆盖到，就算这个图斑为变化区域，并存储最终结果。
-            joint_polygon('real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp',
-                          shp_path)
-
-
+            RSPipeline.print_log('开始将变化识别结果图斑化')
+            joint_polygon(args.shp_path, result_shp_path)
+            RSPipeline.print_log('变化识别结果图斑化完成')
+        RSPipeline.print_log('变化结果板块提取完毕')
     elif args.mode == 'detect-change':
         RSPipeline.print_log('正在执行依据图像变化检测模块')
         # 输入两年份的图片
@@ -234,6 +256,6 @@ if __name__ == '__main__':
             arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, threshold, block_size)
             ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, out_tif)
             raster2vector(out_tif, vector_path=out_shp)
-
+        RSPipeline.print_log('变化识别结果网格化完毕')
     del model
     gc.collect()

@@ -52,12 +52,23 @@ def load_onnx_model(model_path, device):
     :param device:
     :return:
     """
-    if "cuda" in device:
-        ort_session = ort.InferenceSession(model_path, providers=['TensorrtExecutionProvider',
-                                                                  'CUDAExecutionProvider',
-                                                                  'CPUExecutionProvider'])
-    else:
-        ort_session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+    providers = [
+        ('TensorrtExecutionProvider', {
+            'device_id':              1,
+            'trt_max_workspace_size': 2147483648,
+            'trt_fp16_enable':        True,
+        }),
+        ('CUDAExecutionProvider', {
+            'device_id':                 1,
+            'arena_extend_strategy':     'kNextPowerOfTwo',
+            'gpu_mem_limit':             6 * 1024 * 1024 * 1024,
+            'cudnn_conv_algo_search':    'EXHAUSTIVE',
+            'do_copy_in_default_stream': False,
+        }),
+        'CPUExecutionProvider'
+    ]
+
+    ort_session = ort.InferenceSession(model_path, providers=providers)
     return ort_session
 
 

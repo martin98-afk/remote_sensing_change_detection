@@ -11,8 +11,13 @@ from utils.minio_store import MinioStore
 from utils.pipeline import RSPipeline
 
 app = Flask(__name__)
-
-data, model = RSPipeline.load_model('output/ss_eff_b0.yaml', model_type="pytorch", device="cuda:1")
+# 导入detect change中的超参数，同时导入模型
+args = get_parser()
+args = vars(args)
+data, model = RSPipeline.load_model('output/ss_eff_b0.yaml',
+                                    model_type=args["model_type"],
+                                    device=args["device"],
+                                    half=args["half"])
 IMAGE_SIZE = data['image_size'][0]  # 划分图像块大小
 num_classes = data['num_classes']  # 地貌分类数量
 
@@ -31,8 +36,6 @@ def line_pass_count():
 
     :return:
     """
-    args = get_parser()
-    args = vars(args)
     info_dict = {
         "id":                 request.json['id'],  # 保留字段，数据存库使用
         "modelType":          request.json['modelType'],  # 模型类型:0 非农化 1 非粮化

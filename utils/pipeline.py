@@ -388,17 +388,6 @@ class RSPipeline(object):
                                                  device)
             model = model.half() if half else model
         elif model_type == "onnx":
-            model = RSPipeline.get_pytorch_model(model_name, num_classes,
-                                                 pretrained_path, image_size,
-                                                 "cuda")
-            model = model.half() if half else model
-            sample_data = np.random.randn(1, 3, 512, 512)
-            sample_data = sample_data.astype(np.float16) if half else sample_data.astype(
-                np.float32)
-            torch2onnx(model, onnx_path,
-                       sample_data=sample_data)
-            del model
-            gc.collect()
             model = load_onnx_model(onnx_path, device)
         else:
             raise "model type not support, only support onnx and pytorch!"

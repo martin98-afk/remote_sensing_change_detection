@@ -230,8 +230,10 @@ def read_shp(path, encoding='utf-8'):
         return file[['DLBM', 'geometry']]
     elif "CC" in file.columns:
         return file[['CC', 'geometry']]
-    else:
+    elif "class" in file.columns:
         return file[['class', 'geometry']]
+    else:
+        return file[[file.columns[0], 'geometry']]
 
 
 def merge_shape_file(shp_file1_list, save_path):
@@ -388,17 +390,17 @@ def joint_polygon(target_shp_file, con_shp_file):
         pop_list = []
         for i in range(len(detect_ind)):
             for j in range(len(target)):
-                if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area / target.iloc[
-                    j, 1].area > 0.1:
+                if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area \
+                        / target.iloc[j, 1].area > 0.1:
                     pop_list.append(j)
         pop_list = set(pop_list)
         if save_shp is None:
             select = target.iloc[list(pop_list), :]
-            select["class"] = [ind] * len(pop_list)
+            select[select.columns[0]] = [ind] * len(pop_list)
             save_shp = select
         else:
             select = target.iloc[list(pop_list), :]
-            select["class"] = [ind] * len(pop_list)
+            select[select.columns[0]] = [ind] * len(pop_list)
             save_shp = save_shp.append(select)
     save_shp.to_file(save_path)
 
