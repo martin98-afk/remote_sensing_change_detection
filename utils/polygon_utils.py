@@ -55,16 +55,16 @@ def raster2vector(raster_path, vector_path, label=None,
     :return:
     """
     raster = gdal.Open(raster_path)
-
+    band = raster.GetRasterBand(1)
     # 读取栅格的投影信息， 为后面生成的矢量赋予相同的投影信息
     prj = osr.SpatialReference()
-    try:
-        target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
-        raster = transform_geoinfo(raster, target_image)
-        band = raster.GetRasterBand(1)
-        prj.ImportFromWkt(raster.GetProjection())
-    except:
-        band = np.array(Image.open(raster_path))
+    # try:
+    #     target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
+    #     raster = transform_geoinfo(raster, target_image)
+    #     prj.ImportFromWkt(raster.GetProjection())
+    # except:
+    # print(raster.GetProjection())
+    prj.ImportFromWkt(raster.GetProjection())
     drv = ogr.GetDriverByName("ESRI Shapefile")
     # 若文件已经存在，删除
     if os.path.exists(vector_path):
@@ -403,6 +403,7 @@ def joint_polygon(target_shp_file, con_shp_file):
             select[select.columns[0]] = [ind] * len(pop_list)
             save_shp = save_shp.append(select)
     save_shp.to_file(save_path)
+    return save_path
 
 
 if __name__ == "__main__":

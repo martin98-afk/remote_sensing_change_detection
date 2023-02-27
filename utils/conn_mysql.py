@@ -31,11 +31,11 @@ class MysqlConnectionTools:
         cursor.execute(sql)
         self.conn.commit()
 
-    def write_to_mysql_relation(self, sub_id, image_url):
+    def write_to_mysql_relation(self, sub_id, image_url, change_num):
         cursor = self.conn.cursor()
         curr_time = pd.datetime.now()
-        sql = f"insert into land_subject_relation (subject_id, res_image_url, create_time) " \
-              f"values('{sub_id}', '{image_url}', '{curr_time}')"
+        sql = f"insert into land_subject_relation (subject_id, res_image_url, create_time, change_num) " \
+              f"values('{sub_id}', '{image_url}', '{curr_time}', '{change_num}')"
         cursor.execute(sql)
         self.conn.commit()
 

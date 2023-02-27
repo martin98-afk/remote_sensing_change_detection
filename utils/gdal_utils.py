@@ -68,14 +68,14 @@ def write_img(image_path, im_proj, im_geotrans, im_data):
     del dataset
 
 
-def transform_geoinfo(source_image, target_image):
+def transform_geoinfo(source_image, target_image_proj):
     """
     统一投影系统。
 
     :param geo_transform:
     :return:
     """
-    new_image = gdal.Warp("", source_image, format="MEM", dstSRS=target_image.GetProjection())
+    new_image = gdal.Warp("", source_image, format="MEM", dstSRS=target_image_proj)
     return new_image
 
 
@@ -89,7 +89,7 @@ def align_images(image1, image2):
     """
     image1_shape = image1.ReadAsArray().shape
     image2_shape = image2.ReadAsArray().shape
-
+    # 计算两个遥感图像相交区域
     x11, y11, x12, y12 = compute_bounds(image1.GetGeoTransform(), image1_shape)
     x21, y21, x22, y22 = compute_bounds(image2.GetGeoTransform(), image2_shape)
     x1, y1, x2, y2 = max(x11, x21), max(y11, y21), min(x12, x22), min(y12, y22)
@@ -111,7 +111,7 @@ def align_images(image1, image2):
 
 
 def preprocess_rs_image(image1_path, image2_path, resolution,
-                        save_root="../real_data/processed_data/"):
+                        save_root="same"):
     """
     对两个需要进行变化区域分析的遥感图像进行预处理，先统一分辨率，然后进行图像对齐,
     最后保存为带有地理信息的tif文件到 real_data/processed_data 文件夹下。
@@ -125,30 +125,42 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
     """
     image1 = gdal.Open(image1_path)
     image2 = gdal.Open(image2_path)
-    image1 = transform_geoinfo(image1, image2)
-    rs_name1 = image1_path.split('/')[-1].split('.')
-    rs_name2 = image2_path.split('/')[-1].split('.')
-    rs_name1[0] = rs_name1[0] + '_res_' + str(resolution)
-    rs_name2[0] = rs_name2[0] + '_res_' + str(resolution)
-
+    # 统一映射系统
+    if image2.GetProjection() != image1.GetProjection():
+        image1 = transform_geoinfo(image1, image2.GetProjection())
+    # else:
+    # image = gdal.Open("/home/xwtech/遥感识别专用/real_data/processed_data/2020_1_1_res_0.3.tif")
+    # sample_proj = image.GetProjection()
+    # image1 = transform_geoinfo(image1, sample_proj)
+    # image2 = transform_geoinfo(image2, sample_proj)
+    # 统一分辨率
     image1 = change_resolution(image1, resolution)
     image2 = change_resolution(image2, resolution)
-
+    # 遥感图像对齐
     image1, image2 = align_images(image1, image2)
 
-    if save_root is not None:
+    # 设定存储名称
+    if save_root == "same":
+        save_name1 = image1_path
+        save_name2 = image2_path
+    elif save_root is not None:
+        rs_name1 = image1_path.split('/')[-1].split('.')
+        rs_name2 = image2_path.split('/')[-1].split('.')
+        rs_name1[0] = rs_name1[0] + '_res_' + str(resolution)
+        rs_name2[0] = rs_name2[0] + '_res_' + str(resolution)
         save_name1 = save_root + '.'.join(rs_name1)
         save_name2 = save_root + '.'.join(rs_name2)
         if os.path.exists(save_name1):
             os.remove(save_name1)
         if os.path.exists(save_name2):
             os.remove(save_name2)
-        write_img(save_name1, image1.GetProjection(), image1.GetGeoTransform(),
-                  image1.ReadAsArray())
-        write_img(save_name2, image2.GetProjection(), image2.GetGeoTransform(),
-                  image2.ReadAsArray())
     else:
         return image1, image2
+    # 将预处理好的图像写到内存之中，如果save_root为None则直接返回预处理好的图像
+    write_img(save_name1, image1.GetProjection(), image1.GetGeoTransform(),
+              image1.ReadAsArray())
+    write_img(save_name2, image2.GetProjection(), image2.GetGeoTransform(),
+              image2.ReadAsArray())
 
 
 def cut_image(src_image_path):
@@ -247,7 +259,10 @@ def cut_image(src_image_path):
 
 
 if __name__ == "__main__":
-    cut_image("../real_data/processed_data/2021_1_3_res_0.5.tif")
+    preprocess_rs_image()
+
+
+    # cut_image("../real_data/processed_data/2021_1_3_res_0.5.tif")
     # res_list = [0.3, 0.5, 0.8]
     # root_path = "../real_data/移交数据和文档/苏南/0.2米航片/"
     # image_2020_files = glob(os.path.join(root_path, "2020*.tif"))

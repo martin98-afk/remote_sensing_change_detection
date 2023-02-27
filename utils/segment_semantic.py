@@ -1,3 +1,4 @@
+import gc
 from glob import glob
 
 from PIL import Image
@@ -270,23 +271,20 @@ def concat_result(shape, TifArrayShape, npyfile, RepetitiveLength, RowOver, Colu
 
 
 @torch.no_grad()
-def test_big_image(model, image1_path, IMAGE_SIZE,
-                   num_classes, args, denominator=1, addon=0):
+def test_big_image(model, image_path, IMAGE_SIZE, args, denominator=1, addon=0):
     """
     对大型遥感图像进行切割以后，逐片进行语义分割，最后可以选择是否再进行超像素分割对语义分割结果进行后处理。
 
     :param model:
-    :param image1_path:
+    :param image_path:
     :param IMAGE_SIZE:
-    :param num_classes:
-    :param device:
-    :param batch_size:
-    :param cut_length:
-    :param slic:
+    :param args:
+    :param denominator:
+    :param addon:
     :return:
     """
     # 历史图像1
-    raw_image = Image.open(image1_path)
+    raw_image = Image.open(image_path)
     raw_image = np.asarray(raw_image)[:, :, :3]
     RSPipeline.print_log("开始分割原始大遥感影像")
     TifArray, RowOver, ColumnOver = TifCroppingArray(raw_image, 64, IMAGE_SIZE)
@@ -312,14 +310,15 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
         progress = int(100 * i / len(test_loader) / denominator) + addon
         if "id" in args.keys():
             mysql_conn.write_to_mysql_progress(args["id"], str(progress) + "%")
-
+            del ori_image, image
     RSPipeline.print_log("预测完毕，拼接结果中")
-    if "id" in args.keys():
-        mysql_conn.write_to_mysql_progress(args["id"], "100%")
     # 保存结果
     result_shape = (raw_image.shape[0], raw_image.shape[1])
     result_data = concat_result(result_shape, TifArray_shape, predicts, 64, RowOver,
                                 ColumnOver, IMAGE_SIZE)
+    # 回收内存，避免内存泄露
+    del test_loader
+    gc.collect()
 
     return result_data
 
@@ -327,7 +326,6 @@ def test_big_image(model, image1_path, IMAGE_SIZE,
 def test_semantic_segment_files(model,
                                 ind2label,
                                 img_size,
-                                num_classes,
                                 args):
     """
     对多个遥感图像文件进行语义分割
@@ -335,7 +333,6 @@ def test_semantic_segment_files(model,
     :param model: 用来语义分割的模型。
     :param ind2label: 数字标号转中文标号的字典。
     :param img_size: 图像大小。
-    :param num_classes: 总类别数（包含背景类 0）
     :param args: 参数集合
     :return:
     """
@@ -347,8 +344,7 @@ def test_semantic_segment_files(model,
     file_list = [path[:-4].split('/')[-1] for path in image_list]
     for i, image in enumerate(image_list):
         semantic_result = test_big_image(model, image,
-                                         img_size, num_classes,
-                                         vars(args))
+                                         img_size, vars(args))
         RSPipeline.print_log("语义分割已完成")
         image = gdal.Open(image)
 

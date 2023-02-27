@@ -1,13 +1,16 @@
 # encoding:utf-8
+import gc
 import os
+from glob import glob
 
 import requests
 from flask import Flask, request
 
-from detect_change import get_parser, change_block_detect
+from detect_change import get_parser, change_block_detect, change_polygon_detect
 from utils.conn_mysql import *
 from utils.minio_store import MinioStore
 from utils.pipeline import RSPipeline
+from utils.polygon_utils import read_shp
 
 app = Flask(__name__)
 # 导入detect change中的超参数，同时导入模型
@@ -21,7 +24,14 @@ IMAGE_SIZE = data['image_size'][0]  # 划分图像块大小
 num_classes = data['num_classes']  # 地貌分类数量
 
 
-def read_url(save_path, url_path):
+def save_file_from_url(save_path, url_path):
+    """
+    将url里面的文件保存到本地。
+
+    :param save_path: 保存地址
+    :param url_path: 接受到的url地址
+    :return:
+    """
     response = requests.get(url_path)
 
     # 保存图片到本地
@@ -32,6 +42,7 @@ def read_url(save_path, url_path):
 @app.route("/detect_change", methods=['POST'])
 def detect_change():
     """
+    变化识别api接口程序，支持网格化变化识别、图斑变华识别，针对非农化土地变化识别。
 
     :return:
     """
@@ -52,20 +63,39 @@ def detect_change():
                              secret_key="xw-admin",
                              bucket="ai-platform",
                              save_dirs="")
-
-    read_url("real_data/cache/src_image.tif", info_dict["referImageUrl"])
-    read_url("real_data/cache/target_image.tif", info_dict["comparisonImageUrl"])
-    save_path = change_block_detect(model, src_image="real_data/cache/src_image.tif",
-                                    target_image="real_data/cache/target_image.tif",
-                                    IMAGE_SIZE=IMAGE_SIZE, num_classes=num_classes, args=args)
+    save_file_from_url("real_data/cache/src_image.tif", info_dict["referImageUrl"])
+    save_file_from_url("real_data/cache/target_image.tif", info_dict["comparisonImageUrl"])
+    if info_dict["algorithmType"] == 0:
+        save_path, tif_path, shp_path = change_block_detect(model,
+                                                            src_image="real_data/cache/src_image.tif",
+                                                            target_image="real_data/cache/target_image.tif",
+                                                            IMAGE_SIZE=IMAGE_SIZE, args=args)
+    elif info_dict["algorithmType"] == 1:
+        save_path, tif_path, shp_path = change_polygon_detect(model,
+                                                              target_image="real_data/cache/target_image.tif",
+                                                              IMAGE_SIZE=IMAGE_SIZE, args=args)
     # 将识别结果上传minio服务器
+    shp_path = shp_path.replace("shp", "*")
+    shp_paths = glob(shp_path)
     file_name = save_path.split('/')[-1]
     minio_store.fput_object(f"change_result/{file_name}", save_path)
-    save_url = f"http://192.168.9.153:9000/ai-platform/change_result/{file_name}"
-    os.remove(save_path)
+    save_url = f"http://221.226.175.85:9000/ai-platform/change_result/{file_name}"
+    file_name = tif_path.split('/')[-1]
+    minio_store.fput_object(f"change_result/{file_name}", tif_path)
+    for path in shp_paths:
+        file_name = path.split('/')[-1]
+        minio_store.fput_object(f"change_result/{file_name}", path)
+    # 获取当前变化识别出的变化图斑数量
+    file = read_shp(shp_path.replace("*", "shp"))
+    change_num = len(file)
+    # 连接mysql数据库，更新数据处理进度
     # TODO 将存储的文件url以及任务id存储到数据库中。
     mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
-    mysql_conn.write_to_mysql_relation(info_dict["id"], save_url)
+    mysql_conn.write_to_mysql_relation(info_dict["id"], save_url, change_num)
+    mysql_conn.write_to_mysql_progress(args["id"], "100%")
+    # 回收内存
+    gc.collect()
+    pass
 
 
 if __name__ == '__main__':
