@@ -15,6 +15,7 @@ from utils.detect_change_to_block import ARR2TIF
 from utils.output_onnx import to_numpy, softmax
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import raster2vector
+from utils.transfer_style import style_transfer
 
 """
 根据训练好的模型对指定大幅遥感图像进行切割和预测。
@@ -58,7 +59,7 @@ def slic_segment(image, num_segments=700, mask=None, visualize=True):
     return segments
 
 
-def predict(model, image, ori_image, args, threashold=0.2):
+def predict(model, image, ori_image, args, threashold=0.9):
     """
     针对不同的模型提供不同输入数据的途径，现支持onnx模型以及pytorch模型。
 
@@ -283,9 +284,18 @@ def test_big_image(model, image_path, IMAGE_SIZE, args, denominator=1, addon=0):
     :param addon:
     :return:
     """
-    # 历史图像1
-    raw_image = Image.open(image_path)
-    raw_image = np.asarray(raw_image)[:, :, :3]
+    # 如果是变化识别，目标图像会传入两个图像的地址用于进行风格变换
+    if type(image_path) == str:
+        # 历史图像
+        raw_image = Image.open(image_path)
+        raw_image = np.asarray(raw_image)[:, :, :3]
+    else:
+        raw_image1 = Image.open(image_path[0])
+        raw_image1 = np.asarray(raw_image1)[:, :, :3]
+        raw_image2 = Image.open(image_path[1])
+        raw_image2 = np.asarray(raw_image2)[:, :, :3]
+        raw_image = style_transfer(raw_image2, raw_image1)
+
     RSPipeline.print_log("开始分割原始大遥感影像")
     TifArray, RowOver, ColumnOver = TifCroppingArray(raw_image, 64, IMAGE_SIZE)
     TifArray = np.array(TifArray)
@@ -352,5 +362,5 @@ def test_semantic_segment_files(model,
         shp_path = f"{output_dir}/shp/{file_list[i]}_semantic_result.shp"
         ARR2TIF(semantic_result, image.GetGeoTransform(), image.GetProjection(), tif_path)
         RSPipeline.print_log("分割结果栅格数据保存已完成")
-        raster2vector(tif_path, vector_path=shp_path, label=ind2label, remove_tif=args.remove_tif)
+        raster2vector(tif_path, vector_path=shp_path, label=ind2label)
         RSPipeline.print_log("分割结果矢量数据保存已完成")

@@ -1,7 +1,6 @@
 import os
-from glob import glob
 
-from osgeo import gdal
+from osgeo import gdal, osr
 
 from utils.pipeline import RSPipeline
 
@@ -68,16 +67,28 @@ def write_img(image_path, im_proj, im_geotrans, im_data):
     del dataset
 
 
-def transform_geoinfo(source_image, target_image_proj):
+def transform_geoinfo(source_image, spatial_reference):
     """
-    统一投影系统。
+    使用给定坐标系进行投影系统转换。
 
     :param geo_transform:
     :return:
     """
-    new_image = gdal.Warp("", source_image, format="MEM", dstSRS=target_image_proj)
+    new_image = gdal.Warp("", source_image, format="MEM", dstSRS=spatial_reference)
     return new_image
 
+
+def transform_geoinfo_with_index(source_image_path, index):
+    """
+    使用指定标签进行投影系统转换
+
+    :param source_image_path:
+    :param index:
+    :return:
+    """
+    spatial_reference = osr.SpatialReference()
+    spatial_reference.ImportFromEPSG(index)
+    gdal.Warp(source_image_path, source_image_path, format="GTiff", dstSRS=spatial_reference)
 
 def align_images(image1, image2):
     """
@@ -96,16 +107,16 @@ def align_images(image1, image2):
 
     assert x1 < x2 and y1 < y2, print("两遥感图像不相交")
     image1 = gdal.Warp(
-        "",
-        image1,
-        format="MEM",
-        outputBounds=[x1, y1, x2, y2],
+            "",
+            image1,
+            format="MEM",
+            outputBounds=[x1, y1, x2, y2],
     )
     image2 = gdal.Warp(
-        "",
-        image2,
-        format="MEM",
-        outputBounds=[x1, y1, x2, y2],
+            "",
+            image2,
+            format="MEM",
+            outputBounds=[x1, y1, x2, y2],
     )
     return image1, image2
 
@@ -125,17 +136,13 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
     """
     image1 = gdal.Open(image1_path)
     image2 = gdal.Open(image2_path)
-    # 统一映射系统
-    if image2.GetProjection() != image1.GetProjection():
-        image1 = transform_geoinfo(image1, image2.GetProjection())
-    # else:
-    # image = gdal.Open("/home/xwtech/遥感识别专用/real_data/processed_data/2020_1_1_res_0.3.tif")
-    # sample_proj = image.GetProjection()
-    # image1 = transform_geoinfo(image1, sample_proj)
-    # image2 = transform_geoinfo(image2, sample_proj)
-    # 统一分辨率
-    image1 = change_resolution(image1, resolution)
-    image2 = change_resolution(image2, resolution)
+    # # 统一映射系统
+    # # get the WGS84 spatial reference
+    # spatial_reference = osr.SpatialReference()
+    # spatial_reference.ImportFromEPSG(4326)
+    # image1 = transform_geoinfo(image1, spatial_reference)
+    # image2 = transform_geoinfo(image2, spatial_reference)
+
     # 遥感图像对齐
     image1, image2 = align_images(image1, image2)
 
@@ -163,7 +170,17 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
               image2.ReadAsArray())
 
 
-def cut_image(src_image_path):
+def cut_image(src_image_path, year, save_dir="real_data/sample_data"):
+    """
+    将大遥感图像切割成小的512*512大小的样本图像，方便在网页上跨苏展示
+
+    :param src_image_path:
+    :param year:
+    :param save_dir:
+    :return:
+    """
+    # 建立存储文档地址
+    os.makedirs(save_dir, exist_ok=True)
     # 读取要切的原图
     in_ds = gdal.Open(src_image_path)
     print("open tif file succeed")
@@ -194,9 +211,12 @@ def cut_image(src_image_path):
     k = 0
     for i in range(width // block_xsize):
         for j in range(height // block_xsize):
-            out_band1 = in_band1.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize, block_ysize)
-            out_band2 = in_band2.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize, block_ysize)
-            out_band3 = in_band3.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize, block_ysize)
+            out_band1 = in_band1.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize,
+                                             block_ysize)
+            out_band2 = in_band2.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize,
+                                             block_ysize)
+            out_band3 = in_band3.ReadAsArray(i * block_xsize, j * block_xsize, block_xsize,
+                                             block_ysize)
             print(out_band3)
             k += 1
 
@@ -209,14 +229,13 @@ def cut_image(src_image_path):
             gtif_driver = gdal.GetDriverByName("GTiff")
 
             # 创建切出来的要存的文件（3代表3个不都按，最后一个参数为数据类型，跟原文件一致）
-            out_ds = gtif_driver.Create(f"../real_data/sample_data/{str(k)}_2021.tif",
+            out_ds = gtif_driver.Create(f"{save_dir}/{str(k)}_{year}.tif",
                                         block_xsize, block_ysize, outbandsize, datatype)
             # print("create new tif file succeed")
 
             # 获取原图的原点坐标信息，# 获取仿射矩阵信息
             ori_transform = in_ds.GetGeoTransform()
             if ori_transform:
-                print(ori_transform)
                 print("Origin = ({}, {})".format(ori_transform[0], ori_transform[3]))
                 print("Pixel Size = ({}, {})".format(ori_transform[1], ori_transform[5]))
 
@@ -231,7 +250,9 @@ def cut_image(src_image_path):
             top_left_y = top_left_y + j * block_xsize * n_s_pixel_resolution
 
             # 将计算后的值组装为一个元组，以方便设置
-            dst_transform = (top_left_x, ori_transform[1], ori_transform[2], top_left_y, ori_transform[4], ori_transform[5])
+            dst_transform = (
+            top_left_x, ori_transform[1], ori_transform[2], top_left_y, ori_transform[4],
+            ori_transform[5])
 
             # 设置裁剪出来图的原点坐标
             out_ds.SetGeoTransform(dst_transform)
@@ -259,14 +280,12 @@ def cut_image(src_image_path):
 
 
 if __name__ == "__main__":
-    preprocess_rs_image()
-
-
-    # cut_image("../real_data/processed_data/2021_1_3_res_0.5.tif")
+    cut_image("../real_data/processed_data/2020_2_2_res_0.5.tif", 2020,
+              save_dir="../real_data/sample_data2")
     # res_list = [0.3, 0.5, 0.8]
     # root_path = "../real_data/移交数据和文档/苏南/0.2米航片/"
     # image_2020_files = glob(os.path.join(root_path, "2020*.tif"))
     # image_2021_files = [path.replace("2020", "2021") for path in image_2020_files]
     # for i, res in enumerate(res_list):
     #     for j, (path1, path2) in enumerate(zip(image_2020_files, image_2021_files)):
-    #         preprocess_rs_image(path1, path2, res)
+    #         preprocess_rs_image(path1, path2, res, save_root="../real_data/processed_data/")

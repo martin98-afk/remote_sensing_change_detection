@@ -1,6 +1,7 @@
+import json
+
 import cv2
 import geopandas
-from PIL import Image
 from osgeo import osr, gdal, ogr
 
 from config import *
@@ -57,14 +58,8 @@ def raster2vector(raster_path, vector_path, label=None,
     raster = gdal.Open(raster_path)
     band = raster.GetRasterBand(1)
     # 读取栅格的投影信息， 为后面生成的矢量赋予相同的投影信息
-    prj = osr.SpatialReference()
-    # try:
-    #     target_image = gdal.Open("real_data/移交数据和文档/苏北/0.2米航片/2020_2_1.tif")
-    #     raster = transform_geoinfo(raster, target_image)
-    #     prj.ImportFromWkt(raster.GetProjection())
-    # except:
-    # print(raster.GetProjection())
-    prj.ImportFromWkt(raster.GetProjection())
+    prj = osr.SpatialReference(raster.GetProjection())
+    # prj.ImportFromEPSG(4326)
     drv = ogr.GetDriverByName("ESRI Shapefile")
     # 若文件已经存在，删除
     if os.path.exists(vector_path):
@@ -171,6 +166,95 @@ def shp2tif(shp_path, refer_tif_path, target_tif_path,
         del target_ds
 
 
+def shp2json(vector_path, output_path):
+    """
+    将shp文件转为geojson文件
+
+    :return:
+    """
+    gdal.SetConfigOption("GDAL_FILENAME_IS_UTF8", "YES")
+    gdal.SetConfigOption("SHAPE_ENCODING", "GBK")
+    shp_ds = ogr.Open(vector_path)
+    shp_lyr = shp_ds.GetLayer(0)
+
+    # 创建geojson
+    baseName = os.path.basename(output_path)
+    out_driver = ogr.GetDriverByName("GeoJSON")
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    out_ds = out_driver.CreateDataSource(output_path)
+    if out_ds.GetLayer(baseName):
+        out_ds.DeleteLayer(baseName)
+    out_lyr = out_ds.CreateLayer(baseName, shp_lyr.GetSpatialRef())
+    out_lyr.CreateFields(shp_lyr.schema)
+    out_feat = ogr.Feature(out_lyr.GetLayerDefn())
+
+    # 生成结果文件
+    for feature in shp_lyr:
+        out_feat.SetGeometry(feature.geometry())
+        for j in range(feature.GetFieldCount()):
+            out_feat.SetField(j, feature.GetField(j))
+        out_lyr.CreateFeature(out_feat)
+
+    del out_ds
+    del shp_ds
+
+
+def create_polygon(coords):
+    """
+    由坐标点构建多边形
+
+    :param coords:
+    :return:
+    """
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    for coord in coords:
+        for xy in coord:
+            ring.AddPoint(xy[0], xy[1])
+            poly = ogr.Geometry(ogr.wkbPolygon)
+            poly.AddGeometry(ring)
+    return poly.ExportToWkt()
+
+
+def json2shp(jsonfile, shpfile):
+    """
+    将json文件转换为shp文件
+
+    :param json:
+    :param shpfile:
+    :return:
+    """
+    # 读取json文件内容
+    with open(jsonfile, "r") as f:
+        jsonfile = f.read()
+    jsonfile = json.loads(jsonfile)
+    # 创建shp文件
+    gdal.SetConfigOption("GDAL_FILENAME_IS_UTF8", "YES")
+    gdal.SetConfigOption("SHAPE_ENCODING", "GBK")
+    driver = ogr.GetDriverByName('ESRI Shapefile')
+    polygon_data_source = driver.CreateDataSource(shpfile)
+    polygon_layer = polygon_data_source.CreateLayer("Vector", geom_type=ogr.wkbPolygon)
+    field_name = list(jsonfile['features'][0].get("properties").keys())[0]
+    field = ogr.FieldDefn(field_name, ogr.OFTString)
+    field.SetWidth(254)
+    polygon_layer.CreateField(field)
+    # 开始向shp文件中导入多边形信息
+    for i in jsonfile['features']:
+        prop = i.get("properties").popitem()
+        geo = i.get("geometry")
+        geo_type = geo.get("type")
+        if geo_type == "Polygon":
+            polygonCOOR = geo.get("coordinates")
+            poly = create_polygon(polygonCOOR)
+            if poly:
+                feature = ogr.Feature(polygon_layer.GetLayerDefn())
+                feature.SetField(prop[0], 1)
+                area = ogr.CreateGeometryFromWkt(poly)
+                feature.SetGeometry(area)
+                polygon_layer.CreateFeature(feature)
+                feature = None
+    add_SpatialReference(shpfile, "real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp")
+
 def getSRSPair(dataset):
     '''
     获得给定数据的投影参考系和地理参考系。
@@ -239,8 +323,8 @@ def read_shp(path, encoding='utf-8'):
 def merge_shape_file(shp_file1_list, save_path):
     """
     融合多个shp文件，并输出到指定路径之下。
-    :param shp_file1:
-    :param shp_file2:
+
+    :param shp_file1_list:
     :param save_path:
     :return:
     """
@@ -320,10 +404,18 @@ def get_mask(image, mask, shp_path, ind2num):
     return mask
 
 
-def reproject(inputfile, outputfile, layername, insrs, outsrs):
+def reproject(inputfile, outputfile, targetfile):
     gdal.SetConfigOption("GDAL_FILENAME_IS_UTF8", "NO")
     gdal.SetConfigOption("SHAPE_ENCODING", "")
     driver = ogr.GetDriverByName('ESRI Shapefile')
+
+    file = ogr.Open(inputfile)
+    insrs = file.GetLayer(0).GetSpatialRef()
+    # get the WGS84 spatial reference
+    targetfile = ogr.Open(targetfile)
+    outsrs = targetfile.GetLayer(0).GetSpatialRef()
+    # spatial_refenrence = osr.SpatialReference()
+    # spatial_refenrence.ImportFromEPSG(4326)
 
     # create the CoordinateTransformation
     coordTrans = osr.CoordinateTransformation(insrs, outsrs)
@@ -336,7 +428,7 @@ def reproject(inputfile, outputfile, layername, insrs, outsrs):
     outputShapefile = outputfile
     outDataSet = driver.CreateDataSource(outputShapefile)
     print(inLayer.GetGeomType())
-    outLayer = outDataSet.CreateLayer(layername, geom_type=inLayer.GetGeomType())
+    outLayer = outDataSet.CreateLayer("test", geom_type=inLayer.GetGeomType())
 
     # add fields
     inLayerDefn = inLayer.GetLayerDefn()
@@ -372,6 +464,24 @@ def reproject(inputfile, outputfile, layername, insrs, outsrs):
     outDataSet.Destroy()
 
 
+def add_SpatialReference(shp_path, sample_shp):
+    """
+    为矢量文件添加坐标系,
+
+    :param shp_path:
+    :param out_shp_path:
+    :return:
+    """
+    # 设置空间参考
+    sample_shp = ogr.Open(sample_shp)
+    SpatialReference = sample_shp.GetLayer(0).GetSpatialRef()
+    # 写入投影文件
+    SpatialReference.MorphFromESRI()
+    prjfile = open(shp_path.replace('.shp', '.prj'), 'w')
+    prjfile.write(SpatialReference.ExportToWkt())
+    prjfile.close()
+
+
 def joint_polygon(target_shp_file, con_shp_file):
     """
     计算2个不同shp文件中多边形的交集，同时计算相交面积，然后保留相交面积大于一定阈值的目标矢量文件中的多边形。
@@ -380,7 +490,12 @@ def joint_polygon(target_shp_file, con_shp_file):
     :param con_shp_file: 识别出的变化区域矢量文件。
     :return:
 4    """
+    # TODO 统一两个矢量文件的投影系统，然后才能算多边形交集
+    reproject(con_shp_file, con_shp_file, target_shp_file)
+
     target = read_shp(target_shp_file)
+    # 提取目标文件中的耕地区域
+    target = target.loc[target[target.columns[0]] == 1]
     detect = read_shp(con_shp_file)
     detect_list = [3, 4, 5, 8]
     save_path = con_shp_file.replace(".shp", "_spot.shp")
@@ -391,7 +506,7 @@ def joint_polygon(target_shp_file, con_shp_file):
         for i in range(len(detect_ind)):
             for j in range(len(target)):
                 if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area \
-                        / target.iloc[j, 1].area > 0.3:
+                        / target.iloc[j, 1].area > 0.1:
                     pop_list.append(j)
         pop_list = set(pop_list)
         if save_shp is None:
@@ -407,8 +522,14 @@ def joint_polygon(target_shp_file, con_shp_file):
 
 
 if __name__ == "__main__":
-    image = cut_raster("../real_data/test8.tif",
-                       "../real_data/移交数据和文档/rice/rice.shp")
+    shp2json("../real_data/裁剪影像01.shp",
+             "../real_data/裁剪影像01.json")
+    # json2shp("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.json",
+    #          "../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地_back.shp")
+    # add_SpatialReference("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地_back.shp",
+    #                      "../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp")
+    # image = cut_raster("../real_data/test8.tif",
+    #                    "../real_data/移交数据和文档/rice/rice.shp")
 
     # # 从大类标注文件中提取耕地图斑
     # shp_file = read_shp("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_major_class.shp")

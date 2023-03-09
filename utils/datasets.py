@@ -58,7 +58,12 @@ class SSDataRandomCrop(Dataset):
                 y_rd = int(np.random.random() * (image_shape[1] - size))
                 image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
                 mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
-
+            elif self.mode == "noval":
+                x_rd = int(np.random.random() * (image_shape[0] - size))
+                y_rd = int(np.random.random() * (image_shape[1] - size))
+                image = image[x_rd:x_rd + size, y_rd:y_rd + size, :]
+                mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
+                image, mask = data_agu_ss(image, mask)
             mask = torch.from_numpy(mask)
             image = self.normalize(image)
             return image, mask, index

@@ -52,6 +52,7 @@ def get_semantic_segment_model(num_classes,
             if pop_head:
                 ckpt.pop("module.segmentation_head.0.bias")
                 ckpt.pop("module.segmentation_head.0.weight")
+                print("已将模型头部去掉!")
             model.load_state_dict(
                     ckpt,
                     strict=False
@@ -59,6 +60,10 @@ def get_semantic_segment_model(num_classes,
             print('历史最佳模型已读取!')
         except:
             print("参数发生变化，历史模型无效！")
+            model.load_state_dict(
+                    torch.load("output/imagenet.pth", map_location=torch.device(device)),
+                    strict=False
+            )
     if device == "cpu":
         model = model.module.to(torch.device(device))
     return model

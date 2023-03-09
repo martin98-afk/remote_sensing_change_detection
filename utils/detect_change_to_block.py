@@ -46,7 +46,7 @@ def judge(array_in, s, block_size):
     count = np.count_nonzero(array_in)
     index = distribute_count(array_in)
     if (count / block_size / block_size) >= s:
-        array1 = np.ones_like(array_in) * (index + 1)
+        array1 = np.ones_like(array_in) #* (index + 1)
         # array1[0, :] = 0
         # array1[-1, :] = 0
         # array1[:, 0] = 0

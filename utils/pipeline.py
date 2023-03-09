@@ -20,7 +20,7 @@ from models.swin_unet import SwinTransformerSys
 from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
 from utils.datasets import SSDataRandomCrop
-from utils.output_onnx import torch2onnx, load_onnx_model
+from utils.output_onnx import load_onnx_model
 from utils.polygon_utils import read_shp, shp2tif
 from utils.visualize_result import ResultVisualization
 
@@ -132,7 +132,7 @@ class RSPipeline(object):
         image = [np.array(Image.open(path))[..., :3] for path in image_paths]
         mask = [np.array(Image.open(path)) for path in mask_paths]
         # 数据集构建
-        trainset = SSDataRandomCrop(image, mask, mode="train",
+        trainset = SSDataRandomCrop(image, mask, mode="noval",
                                     img_size=self.image_size, length=self.train_size)
         valset = SSDataRandomCrop(image, mask, mode="val",
                                   img_size=self.image_size, length=self.val_size)
@@ -159,12 +159,13 @@ class RSPipeline(object):
 
     def freeze_model(self):
         """
-        冻结模型参数。
+        冻结除分类头以外的所有模型参数。
 
         :return:
         """
-        for p in self.model.parameters():
-            p.requires_grad = False
+        for i, p in enumerate(self.model.parameters()):
+            if i < len(self.model.state_dict()) - 2:
+                p.requires_grad = False
 
     def unfreeze_model(self):
         """
@@ -286,18 +287,27 @@ class RSPipeline(object):
 
         best_acc = 0
         RSPipeline.print_log("模型开始训练")
-        for epoch in range(self.epochs):
+        # 如果分类头是随机参数首先冻结模型参数对分类头进行预热
+        if self.pop_head:
+            self.freeze_model()
+        # TODO 使用预训练模型时加入微调，先固定除分类头外的所有参数，然后先对分类头的参数进行预热，然后在第五轮之后再对所有模型参数进行解冻参与训练
+        for epoch in range(1, self.epochs):
             train_loss, train_acc = self.train_fn(scaler)
             valid_acc, valid_f1 = self.eval_fn(visualize)
             RSPipeline.print_log(
-                    '|EPOCH {}| TRAIN_LOSS {}| TRAIN_F1_SCORE {}| VALID_ACC {}|  VALID_F1_SCORE {}|'.format(
-                            epoch + 1, train_loss.avg, train_acc.avg, valid_acc.avg, valid_f1.avg))
+                    '|EPOCH {} / {}| TRAIN_LOSS {}| TRAIN_F1_SCORE {}| VALID_ACC {}|  '
+                    'VALID_F1_SCORE {}|'.format(
+                            epoch, self.epochs, train_loss.avg, train_acc.avg, valid_acc.avg,
+                            valid_f1.avg))
             scheduler.step()
             if valid_f1.avg > best_acc and epoch > 3:
                 best_acc = valid_f1.avg
                 RSPipeline.print_log(f"在当前训练轮数中找到最佳模型，训练轮数为{epoch + 1}")
                 torch.save(self.model.state_dict(), self.model_save_path)
-                torch2onnx(model, self.onnx_model_name)
+                # # 对模型进行解冻
+                # if
+                # self.unfreeze_model()
+                # torch2onnx(self.model, self.onnx_model_name)
                 RSPipeline.print_log("保存模型中")
                 self.update_model_score("f1-score", best_acc)
 
