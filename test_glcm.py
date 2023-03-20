@@ -82,15 +82,15 @@ def extract_target(class_id, name):
         image_array = np.transpose(image.ReadAsArray(), (1, 2, 0))
         # 对蒙版进行repeat从而使得 在判断条件以后可以直接对图像区域进行筛选。
         image_array[np.repeat(mask[..., np.newaxis], 3, 2) == 0] = 0  # 直接将不需要部分取0
-        # TODO 使用语义分割结果对栅格图像进行异常值剔除
-        if "2021" in path1:
-            ss_result = Image.open(path4)  # 根据语义分割对三调提取后的区域进行异常区域剔除
-            ss_result = np.array(ss_result)
-            ss_result[mask == 0] = 0
-            for id in class_id_list:
-                if id not in dict[name]:
-                    image_array[ss_result == id] = 0
-                    ones[ss_result == id] = 0
+        # # TODO 使用语义分割结果对栅格图像进行异常值剔除
+        # if "2021" in path1:
+        #     ss_result = Image.open(path4)  # 根据语义分割对三调提取后的区域进行异常区域剔除
+        #     ss_result = np.array(ss_result)
+        #     ss_result[mask == 0] = 0
+        #     for id in class_id_list:
+        #         if id not in dict[name]:
+        #             image_array[ss_result == id] = 0
+        #             ones[ss_result == id] = 0
         # 添加第四个维度用来区分前景和背景值
         image_array = np.concatenate([image_array, ones.reshape((ones.shape[0], ones.shape[1], 1))],
                                      axis=-1)
@@ -99,15 +99,15 @@ def extract_target(class_id, name):
                   np.transpose(image_array, (2, 0, 1)))
 
 
-# # 对应三调编号
-# # 提取耕地
-# extract_target([1], "耕地")
-#
-# # 提取林地
-# extract_target([2, 3, 4], "林地园地草地")
-#
-# # 提取建设用地
-# extract_target([5, 6, 7, 8], "建设用地")
+# 对应三调编号
+# 提取耕地
+extract_target([1], "耕地")
+
+# 提取林地
+extract_target([2, 3, 4], "林地园地草地")
+
+# 提取建设用地
+extract_target([5, 6, 7, 8], "建设用地")
 
 
 # TODO 对提取出的栅格数据进行SLIC超像素分割
@@ -179,46 +179,46 @@ def feature_extractor(image, gray_image, image_segments, label):
 # 目前先对耕地和建设用地进行分类，从三调矢量文件中先筛选出对应耕地和建设用地的栅格数据，再使用slic进行图斑聚类划分，最后对每个小图斑进行特征提取，用于分类。
 print("正在进行图斑特征提取.")
 num_segments = 300
-#
-# feature_df = None
-# for i in range(1, 5):
-#     t = time.time()
-#     image = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_耕地.tif")
-#     gray_image = np.array(image.convert("L"))
-#     image = np.array(image)
-#     image_segments = slic_segment(image[..., :3], mask=image[..., 3],
-#                                   visualize=False, num_segments=num_segments)
-#     if feature_df is None:
-#         feature_df = feature_extractor(image, gray_image, image_segments, label=0)
-#     else:
-#         feature_df = pd.concat([
-#             feature_df, feature_extractor(image, gray_image, image_segments, label=0)
-#         ])
-#     print(f"农田特征提取完毕！消耗时间: {str(time.time() - t)}")
-#     t = time.time()
-#     image2 = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_建设用地.tif")
-#     gray_image2 = np.array(image2.convert("L"))
-#     image2 = np.array(image2)
-#     image_segments = slic_segment(image2[..., :3], mask=image2[..., 3],
-#                                   visualize=False, num_segments=num_segments)
-#     feature_df = pd.concat([
-#         feature_df, feature_extractor(image2, gray_image2, image_segments, label=1)
-#     ])
-#     print(f"建设用地特征提取完毕！消耗时间: {str(time.time() - t)}")
-#     t = time.time()
-#     image3 = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_林地园地草地.tif")
-#     gray_image3 = np.array(image3.convert("L"))
-#     image3 = np.array(image3)
-#     image_segments = slic_segment(image3[..., :3], mask=image3[..., 3],
-#                                   visualize=False, num_segments=num_segments)
-#     feature_df = pd.concat([
-#         feature_df, feature_extractor(image3, gray_image3, image_segments, label=2)
-#     ])
-#     print(f"林木用地特征提取完毕！消耗时间: {str(time.time() - t)}")
-#
-# feature_df.to_csv(
-#         f"real_data/trad_alg/extract_features/extracted_features_{num_segments}_segments"
-#         f"_{res}_res.csv")
+
+feature_df = None
+for i in range(1, 5):
+    t = time.time()
+    image = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_耕地.tif")
+    gray_image = np.array(image.convert("L"))
+    image = np.array(image)
+    image_segments = slic_segment(image[..., :3], mask=image[..., 3],
+                                  visualize=False, num_segments=num_segments)
+    if feature_df is None:
+        feature_df = feature_extractor(image, gray_image, image_segments, label=0)
+    else:
+        feature_df = pd.concat([
+            feature_df, feature_extractor(image, gray_image, image_segments, label=0)
+        ])
+    print(f"农田特征提取完毕！消耗时间: {str(time.time() - t)}")
+    t = time.time()
+    image2 = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_建设用地.tif")
+    gray_image2 = np.array(image2.convert("L"))
+    image2 = np.array(image2)
+    image_segments = slic_segment(image2[..., :3], mask=image2[..., 3],
+                                  visualize=False, num_segments=num_segments)
+    feature_df = pd.concat([
+        feature_df, feature_extractor(image2, gray_image2, image_segments, label=1)
+    ])
+    print(f"建设用地特征提取完毕！消耗时间: {str(time.time() - t)}")
+    t = time.time()
+    image3 = Image.open(f"real_data/trad_alg/2021_1_{i}_res_0.5_林地园地草地.tif")
+    gray_image3 = np.array(image3.convert("L"))
+    image3 = np.array(image3)
+    image_segments = slic_segment(image3[..., :3], mask=image3[..., 3],
+                                  visualize=False, num_segments=num_segments)
+    feature_df = pd.concat([
+        feature_df, feature_extractor(image3, gray_image3, image_segments, label=2)
+    ])
+    print(f"林木用地特征提取完毕！消耗时间: {str(time.time() - t)}")
+
+feature_df.to_csv(
+        f"real_data/trad_alg/extract_features/extracted_features_{num_segments}_segments"
+        f"_{res}_res_without_dl.csv")
 
 # TODO 比较不同地貌类型提取图像的同质性分布差异
 # 光谱部分完成，后续增加灰度共生矩阵所计算出的图像同质性，以及各种纹理特征。以及根据同质性特征对异常值的筛选。
@@ -292,7 +292,7 @@ def plotImp(model, X, num=20, fig_size=(40, 20)):
 
 data = pd.read_csv(
         f"real_data/trad_alg/extract_features/extracted_features_{num_segments}_segments_"
-        f"{res}_res.csv",
+        f"{res}_res_without_dl.csv",
         index_col="Unnamed: 0")
 y = data['label'].values
 x = data[data.columns[:-1]].values

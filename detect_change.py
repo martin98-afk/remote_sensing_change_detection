@@ -5,8 +5,6 @@
 import argparse
 import sys
 
-from osgeo import osr
-
 from utils.detect_change_server_func import DetectChangeServer as DCS
 from utils.detect_change_to_block import *
 from utils.gdal_utils import preprocess_rs_image, transform_geoinfo_with_index
@@ -21,15 +19,15 @@ def get_parser():
     :return:
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0_new.yaml',
+    parser.add_argument('--model-info-path', type=str, default='output/ss_eff_b0_with_glcm.yaml',
                         help='需要使用的模型信息文件存储路径')
     parser.add_argument('--model-type', type=str, default='pytorch',
                         help='需要使用的模型信息文件存储路径')
     parser.add_argument('--target-dir', type=str, default='./real_data',
                         help='需要进行预测的图像存储路径')
-    parser.add_argument('--file-path', type=str, default='test_bing.tif',
+    parser.add_argument('--file-path', type=str, default='test_google.tif',
                         help='语义分割、变化识别、图斑变化识别使用的图像')
-    parser.add_argument('--file-path-extended', type=str, default='2020_1_3_res_0.5.tif',
+    parser.add_argument('--file-path-extended', type=str, default='2021_1_1_res_0.5.tif',
                         help='仅变化识别使用的对比图像(过去)')
     parser.add_argument('--shp-path', type=str,
                         default='real_data/裁剪影像01.shp',
@@ -90,6 +88,7 @@ if __name__ == '__main__':
                                     ind2label,
                                     IMAGE_SIZE,
                                     args)
+
     elif args.mode == 'detect-change-shp':
         RSPipeline.print_log('正在执行依据图斑变化检测模块')
         image_list = glob(os.path.join(args.target_dir, args.file_path))
@@ -100,7 +99,10 @@ if __name__ == '__main__':
         for path in image_list:
             # 转换为3857坐标系
             transform_geoinfo_with_index(path, 3857)
-            ds = gdal.Warp(path, path, format="GTiff", xRes=0.5, yRes=0.5)
+            ds = gdal.Warp(path.replace(".tif", "_res_0.5.tif"),
+                           path.replace(".tif", "_3857.tif"),
+                           format="GTiff", xRes=0.5, yRes=0.5)
+
         # 根据图像和对应的矢量路劲制作模板
         save_path = [path.replace("processed_data", "trad_alg")
                          .replace(".tif", f"_mask.tif") for path in image_list]
@@ -110,7 +112,7 @@ if __name__ == '__main__':
         # 将耕地矢量图斑文件转为栅格数据
         for image_path, save in zip(image_list, save_path):
             shp2tif(shp_path=args.shp_path,
-                    refer_tif_path=image_path,
+                    refer_tif_path=image_path.replace(".tif", "_res_0.5.tif"),
                     target_tif_path=save,
                     attribute_field=field,
                     nodata_value=0)
@@ -120,15 +122,18 @@ if __name__ == '__main__':
 
         RSPipeline.print_log('根据图像和对应的矢量路劲制作模板完成')
         for i, (image_path, mask_path) in enumerate(zip(image_list, save_path)):
+            image_path = image_path.replace(".tif", "_res_0.5.tif")
             file_name = os.path.basename(image_path)[:-4]
+            #####################
             # 确定最后变化结果保存路径
+            #####################
             tif_path = args.output_dir + f'/tif/detect_change_{file_name}.tif'
             result_shp_path = args.output_dir + f'/change_result/detect_change_{file_name}.shp'
+            #####################
             # 打开目标图像获取图像的地理位置信息
             image = gdal.Open(image_path)
             # 进行地貌类型识别
-            semantic_result = test_big_image(model, image_path,
-                                             IMAGE_SIZE, vars(args))
+            semantic_result = test_big_image(model, image_path, IMAGE_SIZE, vars(args))
             # 打开当前影像的三调耕地图斑模板，将耕地以外的识别结果都删除，方便统计变化区域
             mask = Image.open(mask_path)
             mask = np.array(mask)
@@ -184,6 +189,8 @@ if __name__ == '__main__':
             arrayout = change_detect(num_w, num_h, rm_w, rm_h, change_data, threshold, block_size)
             ARR2TIF(arrayout, change_data.GetGeoTransform(), origin_proj, out_tif)
             raster2vector(out_tif, vector_path=out_shp, remove_tif=args.remove_tif)
+            print(f"结果存储地址：{out_shp}")
+
         RSPipeline.print_log('变化识别结果网格化完毕')
     del model
     gc.collect()

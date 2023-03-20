@@ -58,8 +58,8 @@ def raster2vector(raster_path, vector_path, label=None,
     raster = gdal.Open(raster_path)
     band = raster.GetRasterBand(1)
     # 读取栅格的投影信息， 为后面生成的矢量赋予相同的投影信息
-    prj = osr.SpatialReference(raster.GetProjection())
-    # prj.ImportFromEPSG(4326)
+    prj = osr.SpatialReference()
+    prj.ImportFromEPSG(3857)
     drv = ogr.GetDriverByName("ESRI Shapefile")
     # 若文件已经存在，删除
     if os.path.exists(vector_path):
@@ -254,6 +254,7 @@ def json2shp(jsonfile, shpfile):
                 polygon_layer.CreateFeature(feature)
                 feature = None
     add_SpatialReference(shpfile, "real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp")
+
 
 def getSRSPair(dataset):
     '''
@@ -482,10 +483,11 @@ def add_SpatialReference(shp_path, sample_shp):
     prjfile.close()
 
 
-def joint_polygon(target_shp_file, con_shp_file):
+def joint_polygon(target_shp_file, con_shp_file, area_limit=10):
     """
     计算2个不同shp文件中多边形的交集，同时计算相交面积，然后保留相交面积大于一定阈值的目标矢量文件中的多边形。
 
+    :param area_limit: 最小变化区域面积阈值
     :param target_shp_file: 目标矢量文件，
     :param con_shp_file: 识别出的变化区域矢量文件。
     :return:
@@ -498,6 +500,7 @@ def joint_polygon(target_shp_file, con_shp_file):
     target = target.loc[target[target.columns[0]] == 1]
     detect = read_shp(con_shp_file)
     detect_list = [3, 4, 5, 8]
+    detect_class = {3: "耕地内建设房屋", 4: "耕地内建设道路", 5: "耕地内建设构筑物", 8: "占用耕地挖建水域"}
     save_path = con_shp_file.replace(".shp", "_spot.shp")
     save_shp = None
     for ind in detect_list:
@@ -506,26 +509,29 @@ def joint_polygon(target_shp_file, con_shp_file):
         for i in range(len(detect_ind)):
             for j in range(len(target)):
                 if detect_ind.iloc[i, 1].intersection(target.iloc[j, 1]).area \
-                        / target.iloc[j, 1].area > 0.1:
+                        / target.iloc[j, 1].area > 0.05 and detect_ind.iloc[i, 1].area > area_limit:
                     pop_list.append(j)
         pop_list = set(pop_list)
         if save_shp is None:
             select = target.iloc[list(pop_list), :]
-            select[select.columns[0]] = [ind] * len(pop_list)
+            select[select.columns[0]] = ind
+            select["zh_label"] = detect_class[ind]
             save_shp = select
         else:
             select = target.iloc[list(pop_list), :]
-            select[select.columns[0]] = [ind] * len(pop_list)
+            select[select.columns[0]] = ind
+            select["zh_label"] = detect_class[ind]
             save_shp = save_shp.append(select)
-    save_shp.to_file(save_path)
+    save_shp.to_file(save_path, encoding="gbk")
     return save_path
 
 
 if __name__ == "__main__":
+    # file = read_shp('../output/semantic_result/change_result/detect_change_block_1678700977.shp')
     shp2json("../real_data/裁剪影像01.shp",
              "../real_data/裁剪影像01.json")
-    # json2shp("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.json",
-    #          "../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地_back.shp")
+    json2shp("../real_data/裁剪影像01.json",
+             "../real_data/裁剪影像01_back.shp")
     # add_SpatialReference("../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地_back.shp",
     #                      "../real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp")
     # image = cut_raster("../real_data/test8.tif",

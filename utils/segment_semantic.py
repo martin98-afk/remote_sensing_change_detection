@@ -18,7 +18,7 @@ from utils.polygon_utils import raster2vector
 from utils.transfer_style import style_transfer
 
 """
-根据训练好的模型对指定大幅遥感图像进行切割和预测。
+根据训练好的模型对指定大幅遥感图像进行切割和预测。膨胀预测
 """
 
 os.makedirs("./output/semantic_result/shp", exist_ok=True)

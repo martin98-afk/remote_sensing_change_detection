@@ -5,6 +5,34 @@ import numpy as np
 from PIL import Image
 from matplotlib import pyplot as plt
 
+from glcm_detect_change import slic_segment
+from remotesensing_alg.fast_glcm import *
+
+
+def add_featrue(image):
+    """
+    使用灰度共生矩阵提取图像中的纹理信息。
+
+    :param image:
+    :param gray_image:
+    :return:
+    """
+    pil_image = Image.fromarray(image)
+    # 使用slic聚类获取初步的语义分割结果，对深度学习的结果进行指导
+    image_segments = slic_segment(image[..., :3], visualize=False, num_segments=50)[..., np.newaxis]
+    image_segments = image_segments / np.max(image_segments)
+    # 使用灰度共生矩阵计算纹理信息
+    gray_image = np.array(pil_image.convert("L"))
+    glcm = fast_glcm(gray_image, levels=4, kernel_size=5)
+    homo = fast_glcm_homogeneity(gray_image, glcm, levels=4, ks=5)[..., np.newaxis]
+    contrast = fast_glcm_contrast(gray_image, glcm, levels=4, ks=5)[..., np.newaxis]
+    entropy = fast_glcm_entropy(gray_image, glcm, levels=4, ks=5)[..., np.newaxis]
+    ASM = fast_glcm_ASM(gray_image, glcm, levels=4, ks=5)[0][..., np.newaxis]
+    dissimilar = fast_glcm_dissimilarity(gray_image, glcm, levels=4, ks=5)[..., np.newaxis]
+    image = np.concatenate([image[..., :3], image_segments, homo,
+                            contrast, entropy, ASM, dissimilar], axis=-1)
+    return image.astype(np.float32)
+
 
 ## data augmentation
 # 随机调节色调、饱和度值

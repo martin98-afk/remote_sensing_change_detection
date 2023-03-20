@@ -1,4 +1,5 @@
 import os
+from glob import glob
 
 from osgeo import gdal, osr
 
@@ -88,7 +89,10 @@ def transform_geoinfo_with_index(source_image_path, index):
     """
     spatial_reference = osr.SpatialReference()
     spatial_reference.ImportFromEPSG(index)
-    gdal.Warp(source_image_path, source_image_path, format="GTiff", dstSRS=spatial_reference)
+    gdal.Warp(source_image_path.replace(".tif", "_3857.tif"),
+              source_image_path, format="GTiff",
+              dstSRS=spatial_reference)
+
 
 def align_images(image1, image2):
     """
@@ -137,12 +141,18 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
     image1 = gdal.Open(image1_path)
     image2 = gdal.Open(image2_path)
     # # 统一映射系统
+    if image1.GetProjection() != image2.GetProjection():
+        spatial_reference = osr.SpatialReference()
+        spatial_reference.ImportFromWkt(image2.GetProjection())
+        image1 = transform_geoinfo(image1, spatial_reference)
     # # get the WGS84 spatial reference
     # spatial_reference = osr.SpatialReference()
     # spatial_reference.ImportFromEPSG(4326)
     # image1 = transform_geoinfo(image1, spatial_reference)
     # image2 = transform_geoinfo(image2, spatial_reference)
-
+    # 统一图像分辨率
+    image1 = change_resolution(image1, resolution)
+    image2 = change_resolution(image2, resolution)
     # 遥感图像对齐
     image1, image2 = align_images(image1, image2)
 
@@ -205,8 +215,8 @@ def cut_image(src_image_path, year, save_dir="real_data/sample_data"):
     # offset_y = height/2
 
     # 定义切图的大小（矩形框）
-    block_xsize = 512  # 行
-    block_ysize = 512  # 列
+    block_xsize = 1024  # 行
+    block_ysize = 1024  # 列
 
     k = 0
     for i in range(width // block_xsize):
@@ -251,8 +261,8 @@ def cut_image(src_image_path, year, save_dir="real_data/sample_data"):
 
             # 将计算后的值组装为一个元组，以方便设置
             dst_transform = (
-            top_left_x, ori_transform[1], ori_transform[2], top_left_y, ori_transform[4],
-            ori_transform[5])
+                top_left_x, ori_transform[1], ori_transform[2], top_left_y, ori_transform[4],
+                ori_transform[5])
 
             # 设置裁剪出来图的原点坐标
             out_ds.SetGeoTransform(dst_transform)
@@ -280,8 +290,13 @@ def cut_image(src_image_path, year, save_dir="real_data/sample_data"):
 
 
 if __name__ == "__main__":
-    cut_image("../real_data/processed_data/2020_2_2_res_0.5.tif", 2020,
-              save_dir="../real_data/sample_data2")
+    os.makedirs("../real_data/sample_data3", exist_ok=True)
+    cut_image("../real_data/processed_data/2021_1_3_res_0.5.tif", "2021",
+              save_dir="../real_data/sample_data3")
+    # path = "../real_data/test_bing.tif"
+    # transform_geoinfo_with_index(path, 3857)
+    # ds = gdal.Warp(path.replace(".tif", "_res_0.5.tif"),
+    #                path, format="GTiff", xRes=0.5, yRes=0.5)
     # res_list = [0.3, 0.5, 0.8]
     # root_path = "../real_data/移交数据和文档/苏南/0.2米航片/"
     # image_2020_files = glob(os.path.join(root_path, "2020*.tif"))

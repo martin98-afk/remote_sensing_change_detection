@@ -3,6 +3,7 @@ import argparse
 import sys
 from glob import glob
 
+
 from utils.pipeline import RSPipeline
 
 """
@@ -24,11 +25,11 @@ def get_parser():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--label", type=str, default="./real_data/semantic_mask/*",
                         help="标签存储路径")
-    parser.add_argument("--update-polygon", type=bool, default=True,
+    parser.add_argument("--update-polygon", type=bool, default=False,
                         help="是否更新训练标签")
-    parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0_new.pth",
+    parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0_with_glcm.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
-    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0_new.pth",
+    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
     parser.add_argument("--model-name", type=str, default="efficientnet-b0",
                         help="训练使用的骨干网络模型名称")
@@ -75,34 +76,7 @@ if __name__ == '__main__':
         "09": 7,
         "10": 8,
     }
-    # ind2label = {
-    #     "01": "耕地",
-    #     "02": "种植园地",
-    #     "03": "林地",
-    #     "04": "草地",
-    #     "05": "商业服务业用地",
-    #     "06": "工矿用地",
-    #     "07": "住宅用地",
-    #     "08": "公共管理与公共服务用地",
-    #     "09": "特殊用地",
-    #     "10": "交通运输用地",
-    #     "11": "水域及水利设施用地",
-    #     "12": "其他土地",
-    # }
-    # ind2num = {
-    #     "01": 1,
-    #     "02": 2,
-    #     "03": 3,
-    #     "04": 4,
-    #     "05": 5,
-    #     "06": 5,
-    #     "07": 5,
-    #     "08": 5,
-    #     "09": 8,
-    #     "10": 6,
-    #     "11": 7,
-    #     "12": 8,
-    # }
+
     label2ind = {v: k for k, v in ind2label.items()}
     num2ind = {i: item for i, item in enumerate(ind2label.keys())}
     num_classes = len(set(ind2num.values()))
@@ -134,9 +108,9 @@ if __name__ == '__main__':
     #                               num_classes=num_classes,
     #                               ind2num=ind2num)
     # 构建遥感地貌识别模型训练pipeline
-    mm = RSPipeline(ind2label, num_classes + 1, args)
+    mm = RSPipeline(ind2label, num_classes + 1, 9, args)
 
-    # 打印模型结构
-    mm.get_model_summary()
+    # # 打印模型结构
+    # mm.get_model_summary()
     # 开始进行模型训练
     mm.run(visualize=False)

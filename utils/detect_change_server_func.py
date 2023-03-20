@@ -12,7 +12,7 @@ class DetectChangeServer:
     """
 
     @staticmethod
-    def detect_change(image0, image1, include_class=[1], identify_classes=[3, 4, 5, 6, 8]):
+    def detect_change(image0, image1, include_class=[1], identify_classes=[3, 4, 5, 8]):
         """
         指定要检测的标签，检测image 1相比image 0中农田区域变化成指定标签地形的区域。
 
@@ -41,7 +41,7 @@ class DetectChangeServer:
         :param target_image: 变化识别目标图像路径。
         :param IMAGE_SIZE: 图像大小
         :param args: 所有系统参数。
-        :return:
+        :return: png变化识别结果, png耕地图斑掩模, tif变化识别结果, shp变化识别结果
         """
         RSPipeline.print_log('正在执行依据图斑变化检测模块')
 
@@ -85,7 +85,8 @@ class DetectChangeServer:
         # TODO 根据耕地mask裁剪出对应耕地识别结果。
         # 将检测出的变化区域转换为原始三调图斑，如果三调图斑中一个图斑中有0.1部分的面积被覆盖到，就算这个图斑为变化区域，并存储最终结果。
         RSPipeline.print_log('开始将变化识别结果图斑化')
-        save_path = joint_polygon(mask_path.replace("tif", "shp"), result_shp_path)
+        save_path = joint_polygon(mask_path.replace("tif", "shp"), result_shp_path,
+                                  args['occupyArea'])
         RSPipeline.print_log('变化识别结果图斑化完成')
         # 将识别结果存储为tif格式
         shp2tif(shp_path=save_path,

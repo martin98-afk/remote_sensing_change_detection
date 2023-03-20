@@ -6,7 +6,8 @@ import zipfile
 from glob import glob
 
 import requests
-from flask import Flask, request
+from gevent import pywsgi
+from flask import Flask, request, jsonify
 from osgeo import gdal
 
 from detect_change import get_parser
@@ -16,12 +17,13 @@ from utils.gdal_utils import preprocess_rs_image, transform_geoinfo_with_index
 from utils.minio_store import MinioStore
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import read_shp, json2shp
+from utils.zip_utils import file2zip, zip2file
 
 app = Flask(__name__)
 # 导入detect change中的超参数，同时导入模型
 args = get_parser()
 args = vars(args)
-data, model = RSPipeline.load_model('output/ss_eff_b0_new.yaml',
+data, model = RSPipeline.load_model('output/ss_eff_b0_with_glcm.yaml',
                                     model_type=args["model_type"],
                                     device=args["device"],
                                     half=args["half"])
@@ -52,18 +54,17 @@ def save_file_from_url(save_path, url_path):
         f.write(response.content)
 
 
-def file2zip(zip_file_name, file_names):
-    """
-    将多个文件压缩存储为zip
+def delete_file(paths):
+    for path in paths:
+        try:
+            os.remove(path)
+        except:
+            ...
 
-    :param zip_file_name:
-    :param file_names:
-    :return:
-    """
-    with zipfile.ZipFile(zip_file_name, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
-        for fn in file_names:
-            parent_path, name = os.path.split(fn)
-            zf.write(fn, arcname=name)
+
+@app.errorhandler(400)
+def bad_argument(error):
+    return jsonify({'message': error.description['message']})
 
 
 @app.route("/detect_change", methods=['POST'])
@@ -85,7 +86,7 @@ def detect_change():
     }
     args["id"] = info_dict["id"]
     args["block_size"] = int(float(info_dict["occupyArea"]) / float(info_dict["resolution"]))
-
+    args["occupyArea"] = float(info_dict["occupyArea"])
     if info_dict["topicType"] == 1:
         # 输入两张tif，分析两张遥感图像的网格变化区域
         tif1_path = "real_data/cache/src_image.tif"
@@ -103,43 +104,70 @@ def detect_change():
                             "real_data/cache/target_image.tif",
                             info_dict["resolution"],
                             save_root="same")
+
         save_path, tif_path, shp_path = DCS.change_block_detect(model,
                                                                 src_image=tif1_path,
                                                                 target_image=tif2_path,
                                                                 IMAGE_SIZE=IMAGE_SIZE, args=args)
+        # 保存预处理后的遥感图像
+        current_time = save_path[:-4].split("_")[-1]
+        file_name = f"refer_image_{current_time}.tif"
+        minio_store.fput_object(f"change_result/{file_name}", tif1_path)
+        file_name = f"comparison_image_{current_time}.tif"
+        minio_store.fput_object(f"change_result/{file_name}", tif2_path)
+        zip_path = shp_path.replace(".shp", ".zip")
     elif info_dict["topicType"] == 0:
         # 输入一张tif一张geojson，分析遥感图像上的变化图斑
-        json_path = "real_data/cache/src_image.json"
+        zip_path = "real_data/cache/src_image.zip"
         tif_path = "real_data/cache/target_image.tif"
-        shp_path = "real_data/cache/src_image.shp"
-        inp_shp_path = shp_path
-        save_file_from_url(json_path, info_dict["referImageUrl"])
+        save_file_from_url(zip_path, info_dict["referImageUrl"])
         save_file_from_url(tif_path, info_dict["comparisonImageUrl"])
+        # 读取zip文件，将zip文件解压，并找到相应的shp路径
+        if os.path.exists("real_data/cache/src_image"):
+            files = glob("real_data/cache/src_image/*")
+            [os.remove(file) for file in files]
+        zip2file(zip_path)
+        shp_path = glob("real_data/cache/src_image/*.shp")[0]
+        inp_shp_path = shp_path
         # TODO 图像预处理,分辨率统一为0.5米
         transform_geoinfo_with_index(tif_path, 3857)
-        gdal.Warp(tif_path, tif_path, format="GTiff",
-                  xRes=float(info_dict["resolution"]),
-                  yRes=float(info_dict["resolution"]))
+        ds = gdal.Warp(tif_path.replace(".tif", "_resize.tif"),
+                       tif_path.replace(".tif", "_3857.tif"),
+                       format="GTiff",
+                       xRes=float(info_dict["resolution"]),
+                       yRes=float(info_dict["resolution"]))
 
         # TODO 将geojson转换为shp文件
-        json2shp(json_path, shp_path)
+
+
         save_path, mask_path, tif_path, shp_path = DCS.change_polygon_detect(model,
                                                                              src_shp=shp_path,
-                                                                             target_image=tif_path,
+                                                                             target_image=tif_path.replace(
+                                                                                 ".tif",
+                                                                                 "_resize.tif"),
                                                                              IMAGE_SIZE=IMAGE_SIZE,
                                                                              args=args)
         file_name = os.path.basename(mask_path)
         minio_store.fput_object(f"change_result/{file_name}", mask_path)
 
-    # 将识别结果上传minio服务器
-    zip_path = shp_path.replace("_spot.shp", "zip")
+        # 将识别结果上传minio服务器
+        zip_path = shp_path.replace("_spot.shp", ".zip")
+    # 保存shp和dbf结果
+    file_name = os.path.basename(shp_path)
+    minio_store.fput_object(f"change_result/{file_name}", shp_path)
+    file_name = os.path.basename(shp_path.replace("shp", "dbf"))
+    minio_store.fput_object(f"change_result/{file_name}", shp_path.replace("shp", "dbf"))
+    # 获取所有shp文件路径
     shp_path = shp_path.replace("shp", "*")
     shp_paths = glob(shp_path)
+    # 保存png结果
     file_name = os.path.basename(save_path)
     minio_store.fput_object(f"change_result/{file_name}", save_path)
     save_url = f"http://221.226.175.85:9000/ai-platform/change_result/{file_name}"
+    # 保存tif结果
     file_name = os.path.basename(tif_path)
     minio_store.fput_object(f"change_result/{file_name}", tif_path)
+    # 将所有shp文件压缩成zip文件
     file2zip(zip_path, shp_paths)
     file_name = os.path.basename(zip_path)
     minio_store.fput_object(f"change_result/{file_name}", zip_path)
@@ -149,13 +177,17 @@ def detect_change():
     # 连接mysql数据库，更新数据处理进度
     # TODO 将存储的文件url以及任务id存储到数据库中。
     mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
-    mysql_conn.write_to_mysql_relation(info_dict["id"], save_url, change_num - 1)
+    mysql_conn.write_to_mysql_relation(info_dict["id"], save_url, change_num)
     mysql_conn.write_to_mysql_progress(args["id"], "100%")
     # 回收内存
     gc.collect()
+    # 删除所有缓存文件
+    paths = shp_paths
+    paths.extend([tif_path, save_path, zip_path])
+    delete_file(paths)
     return json.loads(json.dumps({}))
 
 
 if __name__ == '__main__':
-    # app.run(host='127.0.0.1', port=8002)
-    app.run(host='192.168.9.161', port=8002)
+    server = pywsgi.WSGIServer(('192.168.9.161', 8002), app)
+    server.serve_forever()

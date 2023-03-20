@@ -6,7 +6,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from utils.augment_semantic_segment_image import data_agu_ss
+from utils.augment_semantic_segment_image import data_agu_ss, add_featrue
 
 
 class SSDataRandomCrop(Dataset):
@@ -36,7 +36,9 @@ class SSDataRandomCrop(Dataset):
 
     def __getitem__(self, index):
         if self.mode == "test":
-            return self.image_list[index], self.normalize(self.image_list[index])
+            image = add_featrue(self.image_list[index])
+            # image = self.image_list[index]
+            return self.image_list[index], self.normalize(image)
         else:
             select_index = np.random.randint(len(self.image_list))
             image = self.image_list[select_index]
@@ -65,6 +67,7 @@ class SSDataRandomCrop(Dataset):
                 mask = mask[x_rd:x_rd + size, y_rd:y_rd + size]
                 image, mask = data_agu_ss(image, mask)
             mask = torch.from_numpy(mask)
+            image = add_featrue(image)
             image = self.normalize(image)
             return image, mask, index
 

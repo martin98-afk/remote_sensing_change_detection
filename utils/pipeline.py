@@ -23,6 +23,7 @@ from utils.datasets import SSDataRandomCrop
 from utils.output_onnx import load_onnx_model
 from utils.polygon_utils import read_shp, shp2tif
 from utils.visualize_result import ResultVisualization
+from remotesensing_alg.fast_glcm import *
 
 os.makedirs("./real_data/semantic_mask", exist_ok=True)
 
@@ -30,34 +31,39 @@ os.makedirs("./real_data/semantic_mask", exist_ok=True)
 class RSPipeline(object):
 
     def __init__(self, ind2label,
-                 num_classes,
+                 num_classes, in_channels,
                  args):
         """
         初始化遥感识别系统管道流程。
-        :param num_classes: 分类类别数
+
+        :param num_classes: 分类类别数，
+        :param in_channels: 输入通道数，
+        :param args: 通过命令行传入的超参数,
+        :param ind2label: 数值标签与中文标签的对应关系字典
         """
-        self.batch_size = args.batch_size
-        self.ind2label = ind2label
-        self.num_classes = num_classes
-        self.ignore_background = args.ignore_background
-        self.ign_lab = 0 if self.ignore_background else None
-        self.image_size = args.image_size[0]
-        self.device = args.device
-        self.model_name = args.model_name
-        self.onnx_model_name = self.model_name.replace("pth", "onnx")
-        self.pretrained_model_path = args.pretrained_model_path
-        self.model_save_path = args.model_save_path
-        self.fp16 = args.fp16
-        self.epochs = args.epochs
-        self.train_size = args.train_size
-        self.val_size = args.val_size
-        self.label_path = args.label
-        self.num_workers = args.num_workers
-        self.pop_head = args.pop_head
-        self.ohem = args.ohem
-        self.model, self.optimizer = self.init_model()
-        self.output_model_info()
-        self.train_loader, self.val_loader = self.build_dataset()
+        self.batch_size = args.batch_size   # 批训练大小
+        self.ind2label = ind2label    # 数值标签与中文标签对应字典
+        self.num_classes = num_classes   # 待识别地貌类型数量
+        self.ignore_background = args.ignore_background   #是否忽略背景类
+        self.ign_lab = 0 if self.ignore_background else None  # 如果忽略背景类则定义背景值为0
+        self.image_size = args.image_size[0]   # 输入的图像大小
+        self.device = args.device    # 使用的训练机器
+        self.model_name = args.model_name   # 使用的模型名称
+        self.onnx_model_name = self.model_name.replace("pth", "onnx")  # 如果导出onnx模型，onnx模型的地址
+        self.pretrained_model_path = args.pretrained_model_path  # 预训练模型地址
+        self.model_save_path = args.model_save_path   # 模型保存地址
+        self.fp16 = args.fp16    # 是否使用半精度训练
+        self.epochs = args.epochs    # 训练的总轮数
+        self.train_size = args.train_size   # 训练数据大小
+        self.in_channels = in_channels    # 输入通道数
+        self.val_size = args.val_size    # 验证集大小
+        self.label_path = args.label    # 标签文件存储路径
+        self.num_workers = args.num_workers  # 训练时使用几个worker并行读取数据
+        self.pop_head = args.pop_head   # 是否剔除当前模型的分割头
+        self.ohem = args.ohem     # 是否使用在线难例挖掘
+        self.model, self.optimizer = self.init_model()   # 初始化模型
+        self.output_model_info()     # 将模型超参数输出为yaml文件
+        self.train_loader, self.val_loader = self.build_dataset()  # 构建数据集
 
     def init_model(self):
         """
@@ -67,6 +73,7 @@ class RSPipeline(object):
         """
         if "efficientnet" in self.model_name:
             model = get_semantic_segment_model(num_classes=self.num_classes,
+                                               in_channels=self.in_channels,
                                                model_name=self.model_name,
                                                device=self.device,
                                                pretrained_path=self.pretrained_model_path,
@@ -86,37 +93,11 @@ class RSPipeline(object):
                     print('历史最佳模型已读取!')
                 except:
                     print("参数发生变化，历史模型无效！")
-        elif "nested_unet" in self.model_name:
-            model = NestedUNet(out_ch=9)
-            # model = nn.DataParallel(model)
-            if self.pretrained_model_path is not None and os.path.exists(
-                    self.pretrained_model_path):
-                try:
-                    ckpt = torch.load(self.pretrained_model_path,
-                                      map_location=torch.device(self.device))
-                    model.load_state_dict(
-                            ckpt,
-                            strict=False
-                    )
-                    print('历史最佳模型已读取!')
-                except:
-                    print("参数发生变化，历史模型无效！")
         # 优化器，使用adamw优化器
         model = model.to(self.device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
         RSPipeline.print_log("模型创建完毕")
         return model, optimizer
-
-    def change_resolution(self, image_size):
-        """
-        更换模型训练图像分辨率.
-
-        :param image_size:
-        :return:
-        """
-        self.image_size = image_size
-        self.train_loader, self.val_loader = self.build_dataset()
-        self.output_model_info()
 
     def build_dataset(self):
         """
@@ -132,7 +113,7 @@ class RSPipeline(object):
         image = [np.array(Image.open(path))[..., :3] for path in image_paths]
         mask = [np.array(Image.open(path)) for path in mask_paths]
         # 数据集构建
-        trainset = SSDataRandomCrop(image, mask, mode="noval",
+        trainset = SSDataRandomCrop(image, mask, mode="train",
                                     img_size=self.image_size, length=self.train_size)
         valset = SSDataRandomCrop(image, mask, mode="val",
                                   img_size=self.image_size, length=self.val_size)
@@ -338,6 +319,7 @@ class RSPipeline(object):
                    "device":            self.device,
                    "epochs":            self.epochs,
                    "model_name":        self.model_name,
+                   "in_channels":        self.in_channels,
                    "save_path":         self.model_save_path,
                    "num_classes":       self.num_classes,
                    "batch_size":        self.batch_size,
@@ -350,9 +332,11 @@ class RSPipeline(object):
             yaml.dump(to_yaml, f, default_flow_style=False)
 
     @staticmethod
-    def get_pytorch_model(model_name, num_classes, pretrained_path, image_size, device):
+    def get_pytorch_model(model_name, num_classes, in_channels,
+                          pretrained_path, image_size, device):
         if "efficientnet" in model_name:
             model = get_semantic_segment_model(num_classes=num_classes,
+                                               in_channels=in_channels,
                                                model_name=model_name,
                                                device="cpu",
                                                pretrained_path=pretrained_path,
@@ -388,12 +372,13 @@ class RSPipeline(object):
             data = yaml.load(f, Loader=yaml.FullLoader)
         RSPipeline.print_log("根据yaml文件导入模型中")
         num_classes = data['num_classes']
+        in_channels = data['in_channels']
         pretrained_path = data['save_path']
         model_name = data['model_name']
         image_size = data['image_size'][0]
         onnx_path = pretrained_path.replace("pth", "onnx")
         if model_type == "pytorch":
-            model = RSPipeline.get_pytorch_model(model_name, num_classes,
+            model = RSPipeline.get_pytorch_model(model_name, num_classes, in_channels,
                                                  pretrained_path, image_size,
                                                  device)
             model = model.half() if half else model

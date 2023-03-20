@@ -61,7 +61,7 @@ def fast_glcm(img, vmin=0, vmax=255, levels=8, kernel_size=5, distance=1.0, angl
         for j in range(levels):
             glcm[i, j] = cv2.filter2D(glcm[i, j], -1, kernel)
 
-    glcm = glcm.astype(np.float32)
+    glcm = glcm.astype(np.float16)
     return glcm
 
 

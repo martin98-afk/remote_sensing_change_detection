@@ -9,6 +9,7 @@ from torchinfo import summary
 
 
 def get_semantic_segment_model(num_classes,
+                               in_channels=3,
                                model_name='efficientnet-b0',
                                device='cuda',
                                pretrained_path='./output/label_2_best_perf.pth',
@@ -28,7 +29,7 @@ def get_semantic_segment_model(num_classes,
         model = smp.UnetPlusPlus(
                 encoder_name=model_name,
                 encoder_weights=None,
-                in_channels=3,
+                in_channels=in_channels,
                 decoder_attention_type="scse",
                 classes=num_classes,
                 activation=None,
@@ -38,7 +39,7 @@ def get_semantic_segment_model(num_classes,
         model = smp.Unet(
                 encoder_name=model_name,
                 encoder_weights=None,
-                in_channels=3,
+                in_channels=in_channels,
                 decoder_attention_type="scse",
                 classes=num_classes,
                 activation=None,
@@ -47,8 +48,8 @@ def get_semantic_segment_model(num_classes,
     model.to(device)
     model = torch.nn.DataParallel(model)
     if pretrained_path is not None and os.path.exists(pretrained_path):
+        ckpt = torch.load(pretrained_path, map_location=torch.device(device))
         try:
-            ckpt = torch.load(pretrained_path, map_location=torch.device(device))
             if pop_head:
                 ckpt.pop("module.segmentation_head.0.bias")
                 ckpt.pop("module.segmentation_head.0.weight")
@@ -60,8 +61,9 @@ def get_semantic_segment_model(num_classes,
             print('历史最佳模型已读取!')
         except:
             print("参数发生变化，历史模型无效！")
+            ckpt.pop("module.encoder._conv_stem.weight")
             model.load_state_dict(
-                    torch.load("output/imagenet.pth", map_location=torch.device(device)),
+                    ckpt,
                     strict=False
             )
     if device == "cpu":

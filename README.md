@@ -1,4 +1,4 @@
-# Nested Unet Remote Sensing Semantic Segmentation demo
+# Nested Unet Remote Sensing Semantic Segmentation
 
 ## 环境安装
 
@@ -32,6 +32,46 @@ conda install gdal
 ```
 
 </details>
+
+## 项目文件明细
+
+├─config.py																	项目设置
+├─detect_change.py													进行本地变化识别、语义分割
+├─get_model_performance.py									根据验证数据验证当前模型的准确率
+├─train_and_validate.py												训练并验证模型
+├─export.py																	导出onnx模型
+├─start_server.py														开启wsgi服务器，接收前段传输的参数
+
+├─remotesensing_alg												传统遥感算法
+|   ├─cut_images.py														根据图斑数据从遥感影像中裁剪对应图斑的影像
+|   ├─fast_glcm.py															快速灰度共生矩阵计算模块
+|   ├─__init__.py
+
+├─utils																			辅助函数
+|   ├─augment_semantic_segment_image.py			语义分割图像数据增强，同时加入了计算的纹理信息
+|   ├─counter.py															 训练时统计训练时各种模型评估参数的状态的类
+|   ├─datasets.py															自定义pytorch数据集
+|   ├─gdal_utils.py														   使用gdal模块编写的一些处理遥感图像的函数
+|   ├─pipeline.py															模型整体定义、训练、验证pipeline类
+|   ├─polygon_utils.py													使用geojson模块编写的一些处理shp文件的函数
+|   ├─transfer_style.py													包含遥感图像风格变换代码
+|   ├─visualize_result.py												对地貌识别结果进行可视化展示代码
+|   ├─__init__.py
+|   ├─calculate_acc.py													计算模型准确率
+|   ├─crf.py																		dense crf代码
+|   ├─detect_change_to_block.py									将变化识别结果进行网格化代码
+|   ├─conn_mysql.py														连接mysql数据库写入结果
+|   ├─minio_store.py														连接minio文件数据库，将识别结果进行上传
+|   ├─output_onnx.py														将pytorch模型导出为onnx模型
+|   ├─segment_semantic.py											语义分割代码，进行膨胀预测
+|   ├─detect_change_server_func.py							使用api进行语义分割时使用的一些处理函数
+|   ├─zip_utils.py																将指定文件压缩为zip文件或者将zip文件解压
+
+├─models
+|   ├─unet.py																	构建neseted unet模型
+|   ├─__init__.py
+
+
 
 ## 一、数据准备
 
@@ -127,20 +167,7 @@ save_path: ./output/ss_eff_b1.pth
 
 模型以及模型信息保存在 ./output 之中。
 
-## 三、语义分割
-
-提供要进行地貌语义分割的图像文件夹名，程序会自动分割大幅遥感图像为瓦片图，并对每个瓦片图进行识别，在拼接时丢弃每张瓦片图的边缘 预测不准确的部分，结果栅格数据保存在
-./output/semantic_result/tif 中， 矢量数据保存在 ./output/semantic_result/shp 中。
-
-```shell
-python segment_semantic.py
-```
-
-语义分割结果样例图：
-
-![avartar](./output/out_picture/semantic_result.png)
-
-## 四、模型准确率验证
+## 三、模型准确率验证
 
 ```shell
 python get_model_performance.py
@@ -162,7 +189,7 @@ python get_model_performance.py
 
 其中大部分地貌场景的acc值都超过0.9，房屋、铁路道路的f1-score超过0.8,林草、房屋、铁路道路、水域的iou值超过0.6。
 
-## 五、变化识别
+## 四、变化识别
 
 变化识别流程图如下：
 
@@ -192,8 +219,21 @@ optional arguments:
                         最后网格化判断网格是否变化的阈值，即如果网格中像素比例超过该阈值则判定该网格为变化区域。
   --block-size BLOCK_SIZE
                         变化区域网格化的大小。
-  --mode MODE           程序运行模式，包括detect-change和segment-semantic
+  --mode MODE           程序运行模式，包括detect-change、segment-semantic、detect-change-shp
 ```
+
+提供要进行地貌语义分割的图像文件夹名，程序会自动分割大幅遥感图像为瓦片图，并对每个瓦片图进行识别，在拼接时丢弃每张瓦片图的边缘 预测不准确的部分，结果栅格数据保存在
+./output/semantic_result/tif 中， 矢量数据保存在 ./output/semantic_result/shp 中。
+
+```shell
+python detect_change.py --mode segment_semantic
+```
+
+语义分割结果样例图：
+
+![avartar](./output/out_picture/semantic_result.png)
+
+
 
 针对指定文件夹下的预处理对齐好的遥感图像文件进行变化识别，命名文件遵循以下规则：
 
