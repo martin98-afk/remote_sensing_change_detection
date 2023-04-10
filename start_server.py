@@ -126,7 +126,7 @@ def detect_change():
         if os.path.exists("real_data/cache/src_image"):
             files = glob("real_data/cache/src_image/*")
             [os.remove(file) for file in files]
-        zip2file(zip_path)
+        zip2file(zip_path, "real_data/cache")
         shp_path = glob("real_data/cache/src_image/*.shp")[0]
         inp_shp_path = shp_path
         # TODO 图像预处理,分辨率统一为0.5米
@@ -138,8 +138,6 @@ def detect_change():
                        yRes=float(info_dict["resolution"]))
 
         # TODO 将geojson转换为shp文件
-
-
         save_path, mask_path, tif_path, shp_path = DCS.change_polygon_detect(model,
                                                                              src_shp=shp_path,
                                                                              target_image=tif_path.replace(

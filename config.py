@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 
 
 # 忽略警告信息
+from utils.minio_store import MinioStore
+
 warnings.filterwarnings('ignore')
 
 
@@ -37,31 +39,20 @@ font1 = {'family': 'SimHei',
          'size': 20,
          }
 
-# ind2label = {
-#     "01": "耕地",
-#     "02": "种植园地",
-#     "03": "林地",
-#     "04": "草地",
-#     "05": "商业服务业用地",
-#     "06": "工矿用地",
-#     "07": "住宅用地",
-#     "08": "公共管理与公共服务用地",
-#     "09": "特殊用地",
-#     "10": "交通运输用地",
-#     "11": "水域及水利设施用地",
-#     "12": "其他土地",
-# }
-# ind2num = {
-#     "01": 1,
-#     "02": 2,
-#     "03": 3,
-#     "04": 4,
-#     "05": 5,
-#     "06": 5,
-#     "07": 5,
-#     "08": 5,
-#     "09": 8,
-#     "10": 6,
-#     "11": 7,
-#     "12": 8,
-# }
+# 数据库连接信息
+# 连接minio文件数据库
+minio_store = MinioStore(host="192.168.9.153:9000",
+                         access_key="xw-admin",
+                         secret_key="xw-admin",
+                         bucket="ai-platform",
+                         save_dirs="")
+
+# mysql连接信息
+MYSQL_CONFIG = {
+    'host':    '192.168.9.153',
+    'user':    'urbanlab_admin',
+    'passwd':  'urbanlab_123',
+    'db':      'db_landform_dev',
+    'port':    3306,
+    'charset': 'utf8'
+}

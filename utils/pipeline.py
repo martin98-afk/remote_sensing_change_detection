@@ -15,12 +15,10 @@ from torchinfo import summary
 from tqdm import tqdm
 
 from models import lovasz_losses as L
-from models.nested_unet import NestedUNet
 from models.swin_unet import SwinTransformerSys
 from models.unet import get_semantic_segment_model, edge_ce_dice_loss
 from utils.counter import AverageMeter
 from utils.datasets import SSDataRandomCrop
-from utils.output_onnx import load_onnx_model
 from utils.polygon_utils import read_shp, shp2tif
 from utils.visualize_result import ResultVisualization
 from remotesensing_alg.fast_glcm import *
@@ -382,8 +380,6 @@ class RSPipeline(object):
                                                  pretrained_path, image_size,
                                                  device)
             model = model.half() if half else model
-        elif model_type == "onnx":
-            model = load_onnx_model(onnx_path, device)
         else:
             raise "model type not support, only support onnx and pytorch!"
         return data, model

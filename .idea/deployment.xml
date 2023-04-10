@@ -5,14 +5,14 @@
       <paths name="xwtech@192.168.9.161:22 password">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/xwtech/遥感识别专用" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/xwtech/remotesensing" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
       <paths name="xwtech@192.168.9.161:22 password (1)">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/xwtech/遥感识别专用" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/xwtech/remotesensing" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

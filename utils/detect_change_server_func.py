@@ -1,9 +1,163 @@
 # encoding:utf-8
+import os
 import time
 
+import requests
+
 from utils.detect_change_to_block import *
+from utils.gdal_utils import preprocess_rs_image, transform_geoinfo_with_index
 from utils.polygon_utils import joint_polygon, shp2tif, read_shp
 from utils.segment_semantic import *
+from utils.zip_utils import zip2file, file2zip
+
+
+class DetectTask:
+    """
+    地貌识别任务管理
+    """
+
+    def __init__(self, info_dict, minio_store, model, mysql_conn, args):
+        self.info_dict = info_dict
+        self.args = args
+        self.model = model
+        # 导入模型
+        self.minio_store = minio_store
+        self.mysql_conn = mysql_conn
+        self.args["id"] = info_dict["id"]
+        self.args["block_size"] = int(
+                float(info_dict["occupyArea"]) / float(info_dict["resolution"]))
+        self.args["occupyArea"] = float(info_dict["occupyArea"])
+        self.topic_type = int(info_dict["topicType"])
+        # 输入两张tif，分析两张遥感图像的网格变化区域
+        # TODO 根据每个进程创建不同的缓存路径，使用完后删除
+        # 构建存储中间结果的路径
+        self.root = f"real_data/cache_{info_dict['id']}"
+        os.makedirs(self.root, exist_ok=True)
+        if self.topic_type != 2:
+            # topic type 为2时不进行图片传输，直接使用本地图片进行处理
+            self.target_path = self.root + "/target_image.tif"
+            self.refer_path = self.root + "/src_image.tif" if self.topic_type == 1 else \
+                self.root + "/src_image.zip"
+            # 保存传输过来的目标图像和参照信息
+            self.save_file_from_url(self.refer_path, info_dict["referImageUrl"])
+            self.save_file_from_url(self.target_path, info_dict["comparisonImageUrl"])
+        else:
+            self.target_path = info_dict["comparisonImageUrl"]
+            self.refer_path = info_dict["referImageUrl"]
+        # 对数据进行预处理
+        self.preprocess_data()
+
+    def delete_file(self, root):
+        for path in os.listdir(root):
+            path = os.path.join(root, path)
+            if os.path.isdir(path):
+                for file in os.listdir(path):
+                    os.remove(os.path.join(path, file))
+                os.rmdir(path)
+            else:
+                os.remove(path)
+        os.rmdir(root)
+
+    def save_file_from_url(self, save_path, url_path):
+        """
+        将url里面的文件保存到本地。
+
+        :param save_path: 保存地址
+        :param url_path: 接受到的url地址
+        :return:
+        """
+        response = requests.get(url_path)
+
+        # 保存图片到本地
+        with open(save_path, 'wb') as f:  # 以二进制写入文件保存
+            f.write(response.content)
+
+    def preprocess_data(self):
+        """
+        对传输过来的图像进行预处理，转换为3857格式的影像，同时将分辨率转为指定分辨率。
+
+        :return:
+        """
+        if self.topic_type != 0:
+            # 对影像进行预处理
+            preprocess_rs_image(self.refer_path,
+                                self.target_path,
+                                self.info_dict["resolution"],
+                                save_root="same")
+        else:
+            transform_geoinfo_with_index(self.target_path, 3857)
+            gdal.Warp(self.target_path, self.target_path,
+                      format="GTiff",
+                      xRes=float(self.info_dict["resolution"]),
+                      yRes=float(self.info_dict["resolution"]))
+
+    def process_task(self):
+        if self.topic_type == 0:
+            # 读取zip文件，将zip文件解压，并找到相应的shp路径
+            if os.path.exists(self.root + "/src_image"):
+                files = glob(self.root + "/src_image/*")
+                [os.remove(file) for file in files]
+            zip2file(self.refer_path, self.root)
+            self.refer_path = glob(self.root + "/src_image/*.shp")[0]
+            paths = \
+                DetectChangeServer.change_polygon_detect(self.model,
+                                                         src_shp=self.refer_path,
+                                                         target_image=self.target_path,
+                                                         IMAGE_SIZE=512,
+                                                         args=self.args)
+        else:
+            paths = \
+                DetectChangeServer.change_block_detect(self.model,
+                                                       src_image=self.refer_path,
+                                                       target_image=self.target_path,
+                                                       IMAGE_SIZE=512, args=self.args)
+            # 保存预处理后的遥感图像
+            current_time = paths[0][:-4].split("_")[-1]
+            file_name = f"refer_image_{current_time}.tif"
+            self.minio_store.fput_object(f"change_result/{file_name}", self.refer_path)
+            file_name = f"comparison_image_{current_time}.tif"
+            self.minio_store.fput_object(f"change_result/{file_name}", self.target_path)
+
+        self.save_result(paths)
+
+    def save_result(self, paths):
+        # 将tuple类转为list类，方便添加后续需要删除的路径
+        paths = list(paths)
+        for path in paths:
+            # 将路径中的文件上传到minio服务器上
+            file_name = os.path.basename(path)
+            self.minio_store.fput_object(f"change_result/{file_name}", path)
+            if file_name.endswith("shp"):
+                self.minio_store.fput_object(f"change_result/{file_name.replace('shp', 'dbf')}",
+                                             path.replace("shp", "dbf"))
+                # 获取所有shp文件路径
+                shp_path = path.replace("shp", "*")
+                shp_paths = glob(shp_path)
+                # 将所有shp文件压缩成zip文件
+                zip_path = file_name.replace(".shp", ".zip")
+                file2zip(zip_path, shp_paths)
+                self.minio_store.fput_object(f"change_result/{os.path.basename(zip_path)}",
+                                             zip_path)
+                shp_paths.append(zip_path)
+            elif file_name.endswith("png"):
+                save_url = f"http://221.226.175.85:9000/ai-platform/change_result/{file_name}"
+
+        # 获取当前变化识别出的变化图斑数量
+        file = read_shp(paths[-1])
+        change_num = len(file[file["class"] != 0])
+        # 连接mysql数据库，更新数据处理进度
+        # TODO 将存储的文件url以及任务id存储到数据库中。
+        if self.topic_type == 2:
+            self.mysql_conn.update_result(self.info_dict["id"], save_url, change_num)
+        else:
+            self.mysql_conn.write_to_mysql_relation(self.info_dict["id"], save_url, change_num)
+        self.mysql_conn.update_status(self.info_dict["id"], status=5)
+        self.mysql_conn.write_to_mysql_progress(self.info_dict["id"],
+                                                str(100) + "%")
+        # 回收内存
+        gc.collect()
+        # 删除所有缓存文件
+        self.delete_file(self.root)
 
 
 class DetectChangeServer:
@@ -146,10 +300,8 @@ class DetectChangeServer:
         png_block_path = shp_path.replace(".shp", ".png")
 
         # 对两幅图分别进行地貌类型识别
-        semantic_result_src = test_big_image(model, src_image,
-                                             IMAGE_SIZE, args, denominator=2, addon=0)
-        semantic_result_target = test_big_image(model, target_image,
-                                                IMAGE_SIZE, args, denominator=2, addon=50)
+        semantic_result_src = test_big_image(model, src_image, IMAGE_SIZE, args)
+        semantic_result_target = test_big_image(model, target_image, IMAGE_SIZE, args)
         # 检查两个图像大小是否一致
         assert semantic_result_src.shape == semantic_result_target.shape, "输入数据形状大小不一致"
         RSPipeline.print_log('两年份遥感数据语义分割已完成')

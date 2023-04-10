@@ -18,7 +18,7 @@ def get_parser():
     :return:
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default="cuda",
+    parser.add_argument("--device", type=str, default="cpu",
                         help="确认训练模型使用的机器")
     parser.add_argument("--log-output", action="store_true",
                         help="在控制台打印程序运行结果")
@@ -29,7 +29,7 @@ def get_parser():
                         help="是否更新训练标签")
     parser.add_argument("--model-save-path", type=str, default="output/ss_eff_b0_with_glcm.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
-    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0.pth",
+    parser.add_argument("--pretrained-model-path", type=str, default="output/ss_eff_b0_with_glcm.pth",
                         help="模型保存路径，同时会在同目录生成一个相同名称的yaml文件保存模型各种参数变量。")
     parser.add_argument("--model-name", type=str, default="efficientnet-b0",
                         help="训练使用的骨干网络模型名称")
@@ -49,7 +49,7 @@ def get_parser():
                         help="训练划分数据量")
     parser.add_argument("--val-size", type=int, default=300,
                         help="验证划分数据量")
-    parser.add_argument("--num-workers", type=int, default=4,
+    parser.add_argument("--num-workers", type=int, default=1,
                         help="数据读取时使用的线程数量")
     opt = parser.parse_args()
     return opt
@@ -90,23 +90,18 @@ if __name__ == '__main__':
         print('输出输入到日志中!')
 
     # 更新标签数据，需要指定遥感影像以及对应的矢量文件
+    # TODO 待更新添加新的训练数据的方式，可以设定一个prepared_data文件夹，如果文件夹中有数据则进行更新，更新完毕清空相应文件夹
     if args.update_polygon:
-        image_paths = glob("real_data/processed_data/2021_1_3_res_*.tif")
-        for path in image_paths:
-            RSPipeline.update_polygon(args, image_path=path,
-                                      shp_path="real_data/修正shp/2021_1_3_res_0.5_semantic_result.shp",
+        # 从prepared_data中获取所有待更新文件, 注意shp文件需要和tif文件名相同
+        shp_paths = glob("real_data/prepared_data/*.shp")
+        tif_paths = [path.replace(".shp", ".tif") for path in shp_paths]
+
+        for (shp_path, tif_path) in zip(shp_paths, tif_paths):
+            RSPipeline.update_polygon(args,
+                                      image_path=tif_path,
+                                      shp_path=shp_path,
                                       num_classes=num_classes,
                                       ind2num=ind2num)
-    # image_paths = glob("real_data/processed_data/2020_2_3_res_*.tif")
-    # image_paths.extend(
-    #     glob("real_data/processed_data/2020_2_4_res_*.tif")
-    # )
-    # for path in image_paths:
-    #     RSPipeline.update_polygon(args, image_path=path,
-    #                               shp_path="real_data/移交数据和文档/苏北/0.2米航片对应矢量数据/LCRA_2020_2_merged_fang/"
-    #                                        "LCRA_2020_2_merged.shp",
-    #                               num_classes=num_classes,
-    #                               ind2num=ind2num)
     # 构建遥感地貌识别模型训练pipeline
     mm = RSPipeline(ind2label, num_classes + 1, 9, args)
 

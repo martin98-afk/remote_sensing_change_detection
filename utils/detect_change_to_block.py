@@ -43,10 +43,12 @@ def judge(array_in, s, block_size):
     :param s: 判断是否为变化区域的阈值
     :return: 变化区域标记mask_array【判定为变化则值全为1，未变化则值全为0】
     """
+    if len(array_in.flatten()) == 0:
+        return array_in
     count = np.count_nonzero(array_in)
     index = distribute_count(array_in)
     if (count / block_size / block_size) >= s:
-        array1 = np.ones_like(array_in) #* (index + 1)
+        array1 = np.ones_like(array_in) * (index + 1)
         # array1[0, :] = 0
         # array1[-1, :] = 0
         # array1[:, 0] = 0
@@ -76,8 +78,11 @@ def line_select(num_w, rm_w, h1, data, s, block_size):
     for i in range(1, num_w):
         array_out = judge(data.ReadAsArray(i * block_size, h1, block_size, block_size), s, block_size)
         line_array_out = np.hstack((line_array_out, array_out))
-    array_out1 = judge(data.ReadAsArray(num_w * block_size, h1, rm_w, block_size), s, block_size)
-    line_array_out = np.hstack((line_array_out, array_out1))
+    try:
+        array_out1 = judge(data.ReadAsArray(num_w * block_size, h1, rm_w, block_size), s, block_size)
+        line_array_out = np.hstack((line_array_out, array_out1))
+    except:
+        ...
     return line_array_out
 
 

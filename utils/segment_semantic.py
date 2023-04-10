@@ -12,7 +12,6 @@ from utils.conn_mysql import *
 from utils.crf import DenseCRF
 from utils.datasets import SSDataRandomCrop
 from utils.detect_change_to_block import ARR2TIF
-from utils.output_onnx import to_numpy, softmax
 from utils.pipeline import RSPipeline
 from utils.polygon_utils import raster2vector
 from utils.transfer_style import style_transfer
@@ -74,13 +73,8 @@ def predict(model, image, ori_image, args, threashold=0.9):
         image = image.to(args['device'])
         image = image.half() if args['half'] else image
         with torch.no_grad():
-            output = torch.nn.Softmax(dim=1)(model(image))
+            output = torch.nn.Softmax(dim=1)(model.predict(image))
             output = output.detach().cpu().numpy()
-    elif args['model_type'] == "onnx":
-        image = to_numpy(image)
-        image = image.astype(np.float16) if args['half'] else image.astype(np.float32)
-        output = model.run(["output"], {"input": image})[0]
-        output = softmax(output)
 
     ori_image = ori_image.numpy().astype(np.uint8)
     # 使用dense crf进行后处理
@@ -113,7 +107,7 @@ def visualize_result(image1, predict_mask, crf_mask):
     plt.show()
 
 
-def get_dataloader(TifArray, batch_size, shuffle=False, num_workers=2):
+def get_dataloader(TifArray, batch_size, shuffle=False, num_workers=0):
     """
     根据遥感图像小块构造测试数据集。
 
@@ -305,7 +299,9 @@ def test_big_image(model, image_path, IMAGE_SIZE, args, denominator=1, addon=0):
     RSPipeline.print_log("根据划分图像构造数据集")
     predicts = None
     # 将待检测地貌类型的图像加载成dataloader形式方便数据读取
-    test_loader = get_dataloader(TifArray, batch_size=args['batch_size'])
+    test_loader = get_dataloader(TifArray,
+                                 batch_size=args['batch_size'],
+                                 num_workers=args['num_workers'])
     # 连接mysql数据库，更新数据处理进度
     mysql_conn = MysqlConnectionTools(**MYSQL_CONFIG)
     RSPipeline.print_log("代入模型获得每小块验证结果")
@@ -320,7 +316,6 @@ def test_big_image(model, image_path, IMAGE_SIZE, args, denominator=1, addon=0):
         progress = int(100 * i / len(test_loader) / denominator) + addon
         if "id" in args.keys():
             mysql_conn.write_to_mysql_progress(args["id"], str(progress) + "%")
-            del ori_image, image
     RSPipeline.print_log("预测完毕，拼接结果中")
     # 保存结果
     result_shape = (raw_image.shape[0], raw_image.shape[1])
@@ -364,3 +359,4 @@ def test_semantic_segment_files(model,
         RSPipeline.print_log("分割结果栅格数据保存已完成")
         raster2vector(tif_path, vector_path=shp_path, label=ind2label)
         RSPipeline.print_log("分割结果矢量数据保存已完成")
+    return shp_path

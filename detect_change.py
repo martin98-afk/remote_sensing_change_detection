@@ -5,11 +5,15 @@
 import argparse
 import sys
 
+from PIL import ImageFile
+
 from utils.detect_change_server_func import DetectChangeServer as DCS
 from utils.detect_change_to_block import *
 from utils.gdal_utils import preprocess_rs_image, transform_geoinfo_with_index
 from utils.polygon_utils import joint_polygon, shp2tif, read_shp
 from utils.segment_semantic import *
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def get_parser():
@@ -23,20 +27,20 @@ def get_parser():
                         help='需要使用的模型信息文件存储路径')
     parser.add_argument('--model-type', type=str, default='pytorch',
                         help='需要使用的模型信息文件存储路径')
-    parser.add_argument('--target-dir', type=str, default='./real_data',
+    parser.add_argument('--target-dir', type=str, default='./real_data/sample_data',
                         help='需要进行预测的图像存储路径')
-    parser.add_argument('--file-path', type=str, default='test_google.tif',
+    parser.add_argument('--file-path', type=str, default='54_2021.tif',
                         help='语义分割、变化识别、图斑变化识别使用的图像')
-    parser.add_argument('--file-path-extended', type=str, default='2021_1_1_res_0.5.tif',
+    parser.add_argument('--file-path-extended', type=str, default='54_2020.tif',
                         help='仅变化识别使用的对比图像(过去)')
     parser.add_argument('--shp-path', type=str,
-                        default='real_data/裁剪影像01.shp',
+                        default='real_data/移交数据和文档/苏南/0.2米航片对应矢量数据/DLTB_2021_1_耕地.shp',
                         help='变化识别中参考的矢量文件路径，在detect-change-shp模式下使用')
     parser.add_argument('--output-dir', type=str, default='output/semantic_result',
                         help='输出结果存储路径')
     parser.add_argument('--remove-tif', action='store_true',
                         help='是否要将结果储存为栅格形式')
-    parser.add_argument('--mode', type=str, default='segment-semantic',
+    parser.add_argument('--mode', type=str, default='detect-change-shp',
                         help='程序运行模式，包括detect-change、segment-semantic、detect-change-shp')
     parser.add_argument('--half', action='store_true',
                         help='模型计算时是否开启半精度运算')
@@ -45,6 +49,8 @@ def get_parser():
     parser.add_argument('--batch-size', type=int, default=1,
                         help='进行验证时使用的批量大小')
     parser.add_argument('--device', type=str, default='cuda', help='确认训练模型使用的机器')
+    parser.add_argument('--num-workers', type=int, default=0,
+                        help='数据读取线程数')
     parser.add_argument('--log-output', action='store_true', help='在控制台打印程序运行结果')
     parser.add_argument('--change-threshold', type=float, default=0.25,
                         help='最后网格化判断网格是否变化的阈值，1即如果网格中像素比例超过该阈值则判定该网格为变化区域。')
@@ -84,11 +90,11 @@ if __name__ == '__main__':
     if args.mode == 'segment-semantic':
         RSPipeline.print_log('正在执行语义分割模块')
         # 直接进行语义分割
-        test_semantic_segment_files(model,
-                                    ind2label,
-                                    IMAGE_SIZE,
-                                    args)
-
+        out_shp = test_semantic_segment_files(model,
+                                              ind2label,
+                                              IMAGE_SIZE,
+                                              args)
+        print(f"结果存储地址：{out_shp}")
     elif args.mode == 'detect-change-shp':
         RSPipeline.print_log('正在执行依据图斑变化检测模块')
         image_list = glob(os.path.join(args.target_dir, args.file_path))
@@ -99,8 +105,7 @@ if __name__ == '__main__':
         for path in image_list:
             # 转换为3857坐标系
             transform_geoinfo_with_index(path, 3857)
-            ds = gdal.Warp(path.replace(".tif", "_res_0.5.tif"),
-                           path.replace(".tif", "_3857.tif"),
+            ds = gdal.Warp(path, path,
                            format="GTiff", xRes=0.5, yRes=0.5)
 
         # 根据图像和对应的矢量路劲制作模板
@@ -112,7 +117,7 @@ if __name__ == '__main__':
         # 将耕地矢量图斑文件转为栅格数据
         for image_path, save in zip(image_list, save_path):
             shp2tif(shp_path=args.shp_path,
-                    refer_tif_path=image_path.replace(".tif", "_res_0.5.tif"),
+                    refer_tif_path=image_path,
                     target_tif_path=save,
                     attribute_field=field,
                     nodata_value=0)
@@ -122,7 +127,6 @@ if __name__ == '__main__':
 
         RSPipeline.print_log('根据图像和对应的矢量路劲制作模板完成')
         for i, (image_path, mask_path) in enumerate(zip(image_list, save_path)):
-            image_path = image_path.replace(".tif", "_res_0.5.tif")
             file_name = os.path.basename(image_path)[:-4]
             #####################
             # 确定最后变化结果保存路径
@@ -147,6 +151,7 @@ if __name__ == '__main__':
             RSPipeline.print_log('开始将变化识别结果图斑化')
             joint_polygon(mask_path.replace("tif", "shp"), result_shp_path)
             RSPipeline.print_log('变化识别结果图斑化完成')
+        print(f"结果存储地址：{result_shp_path}")
         RSPipeline.print_log('变化结果板块提取完毕')
     elif args.mode == 'detect-change':
         RSPipeline.print_log('正在执行依据图像变化检测模块')

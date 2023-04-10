@@ -89,8 +89,7 @@ def transform_geoinfo_with_index(source_image_path, index):
     """
     spatial_reference = osr.SpatialReference()
     spatial_reference.ImportFromEPSG(index)
-    gdal.Warp(source_image_path.replace(".tif", "_3857.tif"),
-              source_image_path, format="GTiff",
+    gdal.Warp(source_image_path, source_image_path, format="GTiff",
               dstSRS=spatial_reference)
 
 
@@ -138,13 +137,16 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
     :param save_root: 保存路径根目录，default = ../real_data/processed_data/, 如果输入None则直接返回两张预处理好的图像
     :return:
     """
+    # # 统一映射系统
+    transform_geoinfo_with_index(image1_path, 3857)
+    transform_geoinfo_with_index(image2_path, 3857)
+
     image1 = gdal.Open(image1_path)
     image2 = gdal.Open(image2_path)
-    # # 统一映射系统
-    if image1.GetProjection() != image2.GetProjection():
-        spatial_reference = osr.SpatialReference()
-        spatial_reference.ImportFromWkt(image2.GetProjection())
-        image1 = transform_geoinfo(image1, spatial_reference)
+    # if image1.GetProjection() != image2.GetProjection():
+    #     spatial_reference = osr.SpatialReference()
+    #     spatial_reference.ImportFromWkt(image2.GetProjection())
+    #     image1 = transform_geoinfo(image1, spatial_reference)
     # # get the WGS84 spatial reference
     # spatial_reference = osr.SpatialReference()
     # spatial_reference.ImportFromEPSG(4326)
@@ -182,7 +184,7 @@ def preprocess_rs_image(image1_path, image2_path, resolution,
 
 def cut_image(src_image_path, year, save_dir="real_data/sample_data"):
     """
-    将大遥感图像切割成小的512*512大小的样本图像，方便在网页上跨苏展示
+    将大遥感图像切割成小的512*512大小的样本图像，方便在网页上跨苏展示。
 
     :param src_image_path:
     :param year:
